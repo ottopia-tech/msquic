@@ -787,3 +787,33 @@ TEST(RangeTest, SearchRangeThree)
     ASSERT_EQ(index, 2);
 #endif
 }
+
+TEST(RangeTest, RemoveRangeMiddleSplitWithGrow)
+{
+    SmartRange range;
+
+    //
+    // Fill to AllocLength=16 (heap-allocated) so a middle-split
+    // triggers Grow, which frees the old SubRanges array.
+    //
+    range.Add(100, 100);  // [100..199] at index 0, will be split
+    for (uint32_t i = 1; i <= 15; i++) {
+        range.Add(1000 + i * 100);
+    }
+    ASSERT_EQ(range.ValidCount(), 16u);
+
+    //
+    // Remove [140..159] from middle of [100..199]. Splits into
+    // [100..139] and [160..199], requiring 17 slots -> Grow.
+    //
+    ASSERT_TRUE(QuicRangeRemoveRange(&range.range, 140, 20));
+    ASSERT_EQ(range.ValidCount(), 17u);
+
+    auto sub0 = QuicRangeGet(&range.range, 0);
+    ASSERT_EQ(sub0->Low, 100ull);
+    ASSERT_EQ(sub0->Count, 40ull);
+
+    auto sub1 = QuicRangeGet(&range.range, 1);
+    ASSERT_EQ(sub1->Low, 160ull);
+    ASSERT_EQ(sub1->Count, 40ull);
+}

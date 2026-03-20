@@ -428,11 +428,15 @@ QuicRangeRemoveRange(
         // and the second part will be handled by the "left edge
         // overlaps" case.
         //
+        // Save Sub's value before MakeSpace, which may reallocate
+        // and free the old SubRanges array, invalidating Sub.
+        //
+        QUIC_SUBRANGE OldSub = *Sub;
         QUIC_SUBRANGE* NewSub = QuicRangeMakeSpace(Range, &i);
         if (NewSub == NULL) {
             return FALSE;
         }
-        *NewSub = *Sub;
+        *NewSub = OldSub;
         Sub = NewSub;
     }
 

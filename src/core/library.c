@@ -61,6 +61,9 @@ MsQuicLibraryLoad(
         CxPlatSystemLoad();
         CxPlatLockInitialize(&MsQuicLib.Lock);
         CxPlatDispatchLockInitialize(&MsQuicLib.DatapathLock);
+#if DEBUG
+        QuicLibraryInitializeDbg();
+#endif
         CxPlatListInitializeHead(&MsQuicLib.Registrations);
         CxPlatListInitializeHead(&MsQuicLib.Bindings);
         QuicTraceRundownCallback = QuicTraceRundown;
@@ -87,6 +90,9 @@ MsQuicLibraryUnload(
         QUIC_LIB_VERIFY(MsQuicLib.OpenRefCount == 0);
         QUIC_LIB_VERIFY(!MsQuicLib.InUse);
         MsQuicLib.Loaded = FALSE;
+#if DEBUG
+        QuicLibraryUninitializeDbg();
+#endif
         CxPlatDispatchLockUninitialize(&MsQuicLib.DatapathLock);
         CxPlatLockUninitialize(&MsQuicLib.Lock);
         CxPlatSystemUnload();
@@ -502,9 +508,16 @@ MsQuicLibraryInitialize(
     CxPlatToeplitzHashInitialize(&MsQuicLib.ToeplitzHash);
 
     CxPlatDispatchRwLockInitialize(&MsQuicLib.StatelessRetry.Lock);
-    PlatformInitialized = TRUE;
 
     CxPlatZeroMemory(&MsQuicLib.Settings, sizeof(MsQuicLib.Settings));
+    CxPlatLockInitialize(&MsQuicLib.RegistrationCloseCleanupLock);
+    CxPlatEventInitialize(&MsQuicLib.RegistrationCloseCleanupEvent, FALSE, FALSE);
+    MsQuicLib.RegistrationCloseCleanupShutdown = FALSE;
+    CxPlatListInitializeHead(&MsQuicLib.RegistrationCloseCleanupList);
+    CxPlatRundownInitialize(&MsQuicLib.RegistrationCloseCleanupRundown);
+
+    PlatformInitialized = TRUE;
+
     Status =
         CxPlatStorageOpen(
             NULL,
@@ -521,12 +534,6 @@ MsQuicLibraryInitialize(
     }
 
     MsQuicLibraryReadSettings(NULL); // NULL means don't update registrations.
-
-    CxPlatLockInitialize(&MsQuicLib.RegistrationCloseCleanupLock);
-    CxPlatEventInitialize(&MsQuicLib.RegistrationCloseCleanupEvent, FALSE, FALSE);
-    MsQuicLib.RegistrationCloseCleanupShutdown = FALSE;
-    CxPlatListInitializeHead(&MsQuicLib.RegistrationCloseCleanupList);
-    CxPlatRundownInitialize(&MsQuicLib.RegistrationCloseCleanupRundown);
 
     CXPLAT_THREAD_CONFIG ThreadConfig = {
         0,
@@ -606,9 +613,6 @@ Error:
             CxPlatThreadDelete(&MsQuicLib.RegistrationCloseCleanupWorker);
             MsQuicLib.RegistrationCloseCleanupWorker = 0;
         }
-        CxPlatRundownUninitialize(&MsQuicLib.RegistrationCloseCleanupRundown);
-        CxPlatEventUninitialize(MsQuicLib.RegistrationCloseCleanupEvent);
-        CxPlatLockUninitialize(&MsQuicLib.RegistrationCloseCleanupLock);
         if (MsQuicLib.Storage != NULL) {
             CxPlatStorageClose(MsQuicLib.Storage);
             MsQuicLib.Storage = NULL;
@@ -618,6 +622,9 @@ Error:
             MsQuicLib.DefaultCompatibilityList = NULL;
         }
         if (PlatformInitialized) {
+            CxPlatRundownUninitialize(&MsQuicLib.RegistrationCloseCleanupRundown);
+            CxPlatEventUninitialize(MsQuicLib.RegistrationCloseCleanupEvent);
+            CxPlatLockUninitialize(&MsQuicLib.RegistrationCloseCleanupLock);
             CxPlatDispatchRwLockUninitialize(&MsQuicLib.StatelessRetry.Lock);
             CxPlatUninitialize();
         }
@@ -753,7 +760,7 @@ MsQuicLibraryUninitialize(
     }
 
 #ifndef _KERNEL_MODE
-    CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool);
+    CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool, CXPLAT_WORKER_POOL_REF_LIBRARY);
     MsQuicLib.WorkerPool = NULL;
 #endif
     CxPlatUninitialize();
@@ -776,6 +783,10 @@ CXPLAT_THREAD_CALLBACK(RegistrationCleanupWorker, Context)
 
             CxPlatThreadWait(&Registration->CloseThread);
             CxPlatThreadDelete(&Registration->CloseThread);
+#if DEBUG
+            QuicLibraryUntrackDbgObject(
+                QUIC_DBG_OBJECT_TYPE_REGISTRATION, &Registration->DbgObjectLink);
+#endif
             CXPLAT_FREE(Registration, QUIC_POOL_REGISTRATION);
             CxPlatRundownRelease(&MsQuicLib.RegistrationCloseCleanupRundown);
 
@@ -886,7 +897,7 @@ QuicLibraryLazyInitialize(
 
 #ifndef _KERNEL_MODE
     if (MsQuicLib.WorkerPool == NULL) {
-        MsQuicLib.WorkerPool = CxPlatWorkerPoolCreate(MsQuicLib.ExecutionConfig);
+        MsQuicLib.WorkerPool = CxPlatWorkerPoolCreate(MsQuicLib.ExecutionConfig, CXPLAT_WORKER_POOL_REF_LIBRARY);
         if (!MsQuicLib.WorkerPool) {
             Status = QUIC_STATUS_OUT_OF_MEMORY;
             MsQuicLibraryFreePartitions();
@@ -922,7 +933,7 @@ QuicLibraryLazyInitialize(
         MsQuicLibraryFreePartitions();
 #ifndef _KERNEL_MODE
         if (CreatedWorkerPool) {
-            CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool);
+            CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool, CXPLAT_WORKER_POOL_REF_LIBRARY);
             MsQuicLib.WorkerPool = NULL;
         }
 #endif
@@ -2187,13 +2198,13 @@ MsQuicClose(
 _IRQL_requires_max_(DISPATCH_LEVEL)
 QUIC_BINDING*
 QuicLibraryLookupBinding(
-#ifdef QUIC_COMPARTMENT_ID
-    _In_ QUIC_COMPARTMENT_ID CompartmentId,
-#endif
-    _In_ const QUIC_ADDR* LocalAddress,
-    _In_opt_ const QUIC_ADDR* RemoteAddress
+    _In_ const CXPLAT_UDP_CONFIG* UdpConfig
     )
 {
+    const QUIC_ADDR* LocalAddress = UdpConfig->LocalAddress;
+    const QUIC_ADDR* RemoteAddress = UdpConfig->RemoteAddress;
+    BOOLEAN EnableQtip = !!(UdpConfig->Flags & CXPLAT_SOCKET_FLAG_QTIP);
+
     for (CXPLAT_LIST_ENTRY* Link = MsQuicLib.Bindings.Flink;
         Link != &MsQuicLib.Bindings;
         Link = Link->Flink) {
@@ -2202,7 +2213,7 @@ QuicLibraryLookupBinding(
             CXPLAT_CONTAINING_RECORD(Link, QUIC_BINDING, Link);
 
 #ifdef QUIC_COMPARTMENT_ID
-        if (CompartmentId != Binding->CompartmentId) {
+        if (UdpConfig->CompartmentId != Binding->CompartmentId) {
             continue;
         }
 #endif
@@ -2213,13 +2224,15 @@ QuicLibraryLookupBinding(
         if (Binding->Connected) {
             //
             // For client/connected bindings we need to match on both local and
-            // remote addresses/ports.
+            // remote addresses/ports, along with transport type (QTIP). We need to match on the 5-tuple,
+            // because client connections cannot share the binding if the underlying transport does not match.
             //
             if (RemoteAddress &&
                 QuicAddrCompare(LocalAddress, &BindingLocalAddr)) {
                 QUIC_ADDR BindingRemoteAddr;
                 QuicBindingGetRemoteAddress(Binding, &BindingRemoteAddr);
-                if (QuicAddrCompare(RemoteAddress, &BindingRemoteAddr)) {
+                if (QuicAddrCompare(RemoteAddress, &BindingRemoteAddr) &&
+                    QuicBindingGetQtipEnabled(Binding) == EnableQtip) {
                     return Binding;
                 }
             }
@@ -2227,7 +2240,9 @@ QuicLibraryLookupBinding(
         } else {
             //
             // For server (unconnected/listening) bindings we always use wildcard
-            // addresses, so we simply need to match on local port.
+            // addresses, so we simply need to match on the local port. We need not consider the
+            // binding QTIP settings because we always disallow listeners with different QTIP settings to
+            // share a binding. This is enforced by the caller.
             //
             if (QuicAddrGetPort(&BindingLocalAddr) == QuicAddrGetPort(LocalAddress)) {
                 //
@@ -2259,6 +2274,7 @@ QuicLibraryGetBinding(
     const BOOLEAN ShareBinding = !!(UdpConfig->Flags & CXPLAT_SOCKET_FLAG_SHARE);
     const BOOLEAN ServerOwned = !!(UdpConfig->Flags & CXPLAT_SOCKET_SERVER_OWNED);
     const BOOLEAN Partitioned = !!(UdpConfig->Flags & CXPLAT_SOCKET_FLAG_PARTITIONED);
+    const BOOLEAN EnableQtip = !!(UdpConfig->Flags & CXPLAT_SOCKET_FLAG_QTIP);
 
 #ifdef QUIC_SHARED_EPHEMERAL_WORKAROUND
     //
@@ -2289,19 +2305,14 @@ SharedEphemeralRetry:
 
     Status = QUIC_STATUS_NOT_FOUND;
     CxPlatDispatchLockAcquire(&MsQuicLib.DatapathLock);
-
     Binding =
-        QuicLibraryLookupBinding(
-#ifdef QUIC_COMPARTMENT_ID
-            UdpConfig->CompartmentId,
-#endif
-            UdpConfig->LocalAddress,
-            UdpConfig->RemoteAddress);
+        QuicLibraryLookupBinding(UdpConfig);
     if (Binding != NULL) {
         if (!ShareBinding || Binding->Exclusive ||
             (ServerOwned != Binding->ServerOwned) ||
             (Partitioned != Binding->Partitioned) ||
-            (Partitioned && UdpConfig->PartitionIndex != Binding->PartitionIndex)) {
+            (Partitioned && UdpConfig->PartitionIndex != Binding->PartitionIndex) ||
+            (!Binding->Connected && QuicBindingGetQtipEnabled(Binding) != EnableQtip)) {
             //
             // The binding does already exist, but cannot be shared with the
             // requested configuration.
@@ -2373,26 +2384,30 @@ NewBinding:
         // tuple, so we need to do collision detection based on the whole
         // 4-tuple.
         //
-        Binding =
-            QuicLibraryLookupBinding(
+        CXPLAT_UDP_CONFIG Config = {0};
 #ifdef QUIC_COMPARTMENT_ID
-                UdpConfig->CompartmentId,
+        Config.CompartmentId = UdpConfig->CompartmentId;
 #endif
-                &NewLocalAddress,
-                UdpConfig->RemoteAddress);
+        Config.LocalAddress = &NewLocalAddress;
+        Config.RemoteAddress = UdpConfig->RemoteAddress;
+        Config.Flags = UdpConfig->Flags;
+        Binding =
+            QuicLibraryLookupBinding(&Config);
     } else {
         //
         // The datapath does not supports multiple connected sockets on the same
         // local tuple, so we just do collision detection based on the local
         // tuple.
         //
-        Binding =
-            QuicLibraryLookupBinding(
+        CXPLAT_UDP_CONFIG Config = {0};
 #ifdef QUIC_COMPARTMENT_ID
-                UdpConfig->CompartmentId,
+        Config.CompartmentId = UdpConfig->CompartmentId;
 #endif
-                &NewLocalAddress,
-                NULL);
+        Config.LocalAddress = &NewLocalAddress;
+        Config.RemoteAddress = NULL;
+        Config.Flags = UdpConfig->Flags;
+        Binding =
+            QuicLibraryLookupBinding(&Config);
     }
 
     if (Binding != NULL) {
@@ -2772,7 +2787,7 @@ MsQuicExecutionCreate(
         //
         // Clean up any previous worker pool and create a new one.
         //
-        CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool);
+        CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool, CXPLAT_WORKER_POOL_REF_EXTERNAL);
         MsQuicLib.WorkerPool =
             CxPlatWorkerPoolCreateExternal(Count, Configs, Executions);
         if (MsQuicLib.WorkerPool == NULL) {
@@ -2807,7 +2822,7 @@ MsQuicExecutionDelete(
     UNREFERENCED_PARAMETER(Count);
     UNREFERENCED_PARAMETER(Executions);
 
-    CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool);
+    CxPlatWorkerPoolDelete(MsQuicLib.WorkerPool, CXPLAT_WORKER_POOL_REF_EXTERNAL);
     MsQuicLib.WorkerPool = NULL;
     MsQuicLib.CustomExecutions = FALSE;
 
@@ -2893,3 +2908,61 @@ QuicLibrarySetRetryKeyConfig(
         Config->RotationMs);
     return QUIC_STATUS_SUCCESS;
 }
+
+#if DEBUG
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicLibraryInitializeDbg(
+    void
+    )
+{
+    CxPlatDispatchLockInitialize(&MsQuicLib.DbgLock);
+
+    for (int i = 0; i < QUIC_DBG_OBJECT_TYPE_MAX; i++) {
+        CxPlatListInitializeHead(&MsQuicLib.DbgObjectTrackers[i].List);
+        MsQuicLib.DbgObjectTrackers[i].Count = 0;
+    }
+}
+
+_IRQL_requires_max_(PASSIVE_LEVEL)
+void
+QuicLibraryUninitializeDbg(
+    void
+    )
+{
+    for (int i = 0; i < QUIC_DBG_OBJECT_TYPE_MAX; i++) {
+        CXPLAT_DBG_ASSERT(CxPlatListIsEmpty(&MsQuicLib.DbgObjectTrackers[i].List));
+        CXPLAT_DBG_ASSERT(MsQuicLib.DbgObjectTrackers[i].Count == 0);
+    }
+    CxPlatDispatchLockUninitialize(&MsQuicLib.DbgLock);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+QuicLibraryTrackDbgObject(
+    QUIC_DBG_OBJECT_TYPE Type,
+    CXPLAT_LIST_ENTRY* ObjectEntry
+    )
+{
+    CxPlatDispatchLockAcquire(&MsQuicLib.DbgLock);
+    CxPlatListInsertTail(&MsQuicLib.DbgObjectTrackers[Type].List, ObjectEntry);
+    MsQuicLib.DbgObjectTrackers[Type].Count++;
+    CxPlatDispatchLockRelease(&MsQuicLib.DbgLock);
+}
+
+_IRQL_requires_max_(DISPATCH_LEVEL)
+void
+QuicLibraryUntrackDbgObject(
+    QUIC_DBG_OBJECT_TYPE Type,
+    CXPLAT_LIST_ENTRY* ObjectEntry
+    )
+{
+    CxPlatDispatchLockAcquire(&MsQuicLib.DbgLock);
+    CxPlatListEntryRemove(ObjectEntry);
+    CXPLAT_DBG_ASSERT(MsQuicLib.DbgObjectTrackers[Type].Count > 0);
+    MsQuicLib.DbgObjectTrackers[Type].Count--;
+    CxPlatDispatchLockRelease(&MsQuicLib.DbgLock);
+}
+
+#endif // DEBUG

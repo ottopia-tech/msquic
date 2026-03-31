@@ -49,20 +49,6 @@ void QuicTestValidateApi()
         QUIC_STATUS_INVALID_PARAMETER);
 }
 
-struct RegistrationCloseContext {
-    CxPlatEvent Event;
-};
-
-_Function_class_(QUIC_REGISTRATION_CLOSE_CALLBACK)
-void
-QUIC_API RegistrationCloseCallback(
-    _In_opt_ void* Context
-    )
-{
-    RegistrationCloseContext* CloseContext = (RegistrationCloseContext*)Context;
-    CloseContext->Event.Set();
-}
-
 void QuicTestValidateRegistration()
 {
     TEST_QUIC_STATUS(
@@ -71,16 +57,9 @@ void QuicTestValidateRegistration()
 
     MsQuic->RegistrationClose(nullptr);
 
-    {
-        MsQuicRegistration Registration;
-        TEST_TRUE(Registration.IsValid());
-
 #ifdef QUIC_API_ENABLE_PREVIEW_FEATURES
-        RegistrationCloseContext CloseContext;
-        Registration.CloseAsync(RegistrationCloseCallback, &CloseContext);
-        TEST_TRUE(CloseContext.Event.WaitTimeout(TestWaitTimeout));
-#endif // QUIC_API_ENABLE_PREVIEW_FEATURES
-    }
+    MsQuic->RegistrationClose2(nullptr, nullptr, nullptr);
+#endif
 }
 
 void QuicTestValidateConfiguration()
@@ -364,8 +343,8 @@ void QuicTestValidateConfiguration()
 
 namespace
 {
-    _Function_class_(QUIC_LISTENER_CALLBACK)
     template<typename T>
+    _Function_class_(QUIC_LISTENER_CALLBACK)
     QUIC_STATUS
     QUIC_API
     DummyListenerCallback(
@@ -1371,7 +1350,7 @@ AllowSendCompleteStreamCallback(
     return QUIC_STATUS_SUCCESS;
 }
 
-void QuicTestValidateStream(bool Connect)
+void QuicTestValidateStream(const bool& Connect)
 {
     MsQuicRegistration Registration;
     TEST_TRUE(Registration.IsValid());
@@ -3610,7 +3589,31 @@ void QuicTestListenerParam()
                     &Length,
                     nullptr));
             TEST_EQUAL(Length, 0);
-            // TODO: Stateful test once Listener->CibrId is filled
+
+            //
+            // Stateful test: set CIBIR_ID and verify all bytes are returned correctly.
+            //
+            {
+                TestScopeLogger LogScope2("GetParam after SetParam");
+                uint8_t SetPayload[] = { 0, 0xDE, 0xAD, 0xBE, 0xAB };
+                TEST_QUIC_SUCCEEDED(
+                    MsQuic->SetParam(
+                        Listener.Handle,
+                        QUIC_PARAM_LISTENER_CIBIR_ID,
+                        sizeof(SetPayload),
+                        SetPayload));
+
+                uint8_t GetBuffer[16];
+                CxPlatZeroMemory(GetBuffer, sizeof(GetBuffer));
+                uint32_t GetLength = sizeof(GetBuffer);
+                TEST_QUIC_SUCCEEDED(
+                    Listener.GetParam(
+                        QUIC_PARAM_LISTENER_CIBIR_ID,
+                        &GetLength,
+                        GetBuffer));
+                TEST_EQUAL(GetLength, sizeof(SetPayload));
+                TEST_TRUE(memcmp(GetBuffer, SetPayload, sizeof(SetPayload)) == 0);
+            }
         }
     }
 
@@ -5320,7 +5323,7 @@ TestTlsHandshakeInfoListenerCallback(
 
 void
 QuicTestTlsHandshakeInfo(
-    _In_ bool EnableResumption
+    const bool& EnableResumption
     )
 {
     MsQuicRegistration Registration;
@@ -6123,7 +6126,7 @@ RejectListenerCallback(
 
 void
 QuicTestConnectionRejection(
-    bool RejectByClosing
+    const bool& RejectByClosing
     )
 {
     CxPlatEvent ShutdownEvent;
@@ -6158,7 +6161,7 @@ QuicTestConnectionRejection(
 }
 
 void
-QuicTestCredentialLoad(const QUIC_CREDENTIAL_CONFIG* Config)
+QuicTestCredentialLoad(const QUIC_CREDENTIAL_BLOB& Config)
 {
     MsQuicRegistration Registration;
     TEST_TRUE(Registration.IsValid());
@@ -6166,7 +6169,7 @@ QuicTestCredentialLoad(const QUIC_CREDENTIAL_CONFIG* Config)
     MsQuicConfiguration Configuration(Registration, "MsQuicTest");
     TEST_TRUE(Configuration.IsValid());
 
-    TEST_QUIC_SUCCEEDED(Configuration.LoadCredential(Config));
+    TEST_QUIC_SUCCEEDED(Configuration.LoadCredential(&Config.CredConfig));
 }
 
 
@@ -6736,6 +6739,24 @@ QuicTestProcessEventQ(
 #endif
     }
     CxPlatEventQReturn(EventQ, CqeCount);
+}
+
+namespace {
+
+struct RegistrationCloseContext {
+    CxPlatEvent Event;
+};
+
+_Function_class_(QUIC_REGISTRATION_CLOSE_CALLBACK)
+void
+QUIC_API RegistrationCloseCallback(
+    _In_opt_ void* Context
+    )
+{
+    RegistrationCloseContext* CloseContext = (RegistrationCloseContext*)Context;
+    CloseContext->Event.Set();
+}
+
 }
 
 void

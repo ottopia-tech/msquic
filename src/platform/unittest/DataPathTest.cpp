@@ -58,7 +58,7 @@ struct QuicAddr
     }
 
     void Resolve(QUIC_ADDRESS_FAMILY af, const char* hostname) {
-        CXPLAT_WORKER_POOL* WorkerPool = CxPlatWorkerPoolCreate(nullptr);
+        CXPLAT_WORKER_POOL* WorkerPool = CxPlatWorkerPoolCreate(nullptr, CXPLAT_WORKER_POOL_REF_TOOL);
         CXPLAT_DATAPATH* Datapath = nullptr;
         CXPLAT_DATAPATH_INIT_CONFIG InitConfig = {0};
         InitConfig.EnableDscpOnRecv = TRUE;
@@ -81,7 +81,7 @@ struct QuicAddr
             GTEST_FATAL_FAILURE_("Failed to resolve IP address.");
         }
         CxPlatDataPathUninitialize(Datapath);
-        CxPlatWorkerPoolDelete(WorkerPool);
+        CxPlatWorkerPoolDelete(WorkerPool, CXPLAT_WORKER_POOL_REF_TOOL);
     }
 };
 
@@ -101,13 +101,13 @@ struct UdpRecvContext {
 };
 
 struct TcpClientContext {
-    bool Connected : 1;
-    bool Disconnected : 1;
-    bool Received : 1;
+    bool Connected{};
+    bool Disconnected{};
+    bool Received{};
     CXPLAT_EVENT ConnectEvent;
     CXPLAT_EVENT DisconnectEvent;
     CXPLAT_EVENT ReceiveEvent;
-    TcpClientContext() : Connected(false), Disconnected(false), Received(false) {
+    TcpClientContext() {
         CxPlatEventInitialize(&ConnectEvent, FALSE, FALSE);
         CxPlatEventInitialize(&DisconnectEvent, FALSE, FALSE);
         CxPlatEventInitialize(&ReceiveEvent, FALSE, FALSE);
@@ -120,13 +120,13 @@ struct TcpClientContext {
 };
 
 struct TcpListenerContext {
-    CXPLAT_SOCKET* Server;
-    TcpClientContext ServerContext;
-    bool Accepted : 1;
-    bool Reject : 1;
-    bool Rejected : 1;
-    CXPLAT_EVENT AcceptEvent;
-    TcpListenerContext() : Server(nullptr), Accepted(false), Reject{false}, Rejected{false} {
+    CXPLAT_SOCKET* Server{};
+    TcpClientContext ServerContext{};
+    bool Accepted{};
+    bool Reject{};
+    bool Rejected{};
+    CXPLAT_EVENT AcceptEvent{};
+    TcpListenerContext() {
         CxPlatEventInitialize(&AcceptEvent, FALSE, FALSE);
     }
     ~TcpListenerContext() {
@@ -464,7 +464,7 @@ struct CxPlatDataPath {
         ) noexcept
     {
         WorkerPool =
-            CxPlatWorkerPoolCreate(Config ? Config : &DefaultExecutionConfig);
+            CxPlatWorkerPoolCreate(Config ? Config : &DefaultExecutionConfig, CXPLAT_WORKER_POOL_REF_TOOL);
         CXPLAT_DATAPATH_INIT_CONFIG InitConfig = {0};
         InitConfig.EnableDscpOnRecv = TRUE;
         InitStatus =
@@ -480,7 +480,7 @@ struct CxPlatDataPath {
         if (Datapath) {
             CxPlatDataPathUninitialize(Datapath);
         }
-        CxPlatWorkerPoolDelete(WorkerPool);
+        CxPlatWorkerPoolDelete(WorkerPool, CXPLAT_WORKER_POOL_REF_TOOL);
     }
     QUIC_STATUS GetInitStatus() const noexcept { return InitStatus; }
     bool IsValid() const { return QUIC_SUCCEEDED(InitStatus); }

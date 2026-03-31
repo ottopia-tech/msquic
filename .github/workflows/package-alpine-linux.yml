@@ -32,9 +32,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
+      uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a
     - name: Generate APKBUILD
       shell: pwsh
       run: |
@@ -47,7 +47,7 @@ jobs:
                 -v $(pwd):/msquic \
                 ${{ matrix.vec.image }} /msquic/scripts/package-build.sh
     - name: Upload Package
-      uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+      uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f
       with:
         name: ${{ matrix.vec.friendlyName }}-package
         path: packages/*.apk
@@ -64,21 +64,26 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout Repository
-      uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd
+      uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
     - name: Download Package
-      uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53
+      uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c
       with:
         name: ${{ matrix.vec.friendlyName }}-package
         path: artifacts
     - name: Set up QEMU
-      uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130
-    - name: Set up .NET 9.0
-      uses: actions/setup-dotnet@d4c94342e560b34958eacfc5d055d21461ed1c5d
+      uses: docker/setup-qemu-action@ce360397dd3f832beb865e1373c09c0e9f86d70a
+    - name: Set up .NET
+      uses: actions/setup-dotnet@c2fa09f4bde5ebb9d1777cf28262a3eb3db3ced7
       with:
-        dotnet-version: ${{ matrix.vec.dotnetVersion }}
-    - name: Build .NET QUIC Test Project
+        dotnet-version: 10.0.x
+    - name: Build .NET QUIC Test Project (self-contained)
       run: |
-        pushd src/cs/QuicSimpleTest && dotnet build QuicHello.net${{ matrix.vec.dotnetVersion }}.csproj -a ${{ matrix.vec.arch }} -c ${{ matrix.vec.config }} -o artifacts/net${{ matrix.vec.dotnetVersion }} -f net${{ matrix.vec.dotnetVersion }} && popd
+        # Map arch to musl runtime identifier
+        case "${{ matrix.vec.arch }}" in
+          x64) RID="linux-musl-x64" ;;
+          arm64) RID="linux-musl-arm64" ;;
+        esac
+        pushd src/cs/QuicSimpleTest && dotnet publish QuicHello.net${{ matrix.vec.dotnetVersion }}.csproj -r $RID -c ${{ matrix.vec.config }} -o artifacts/net${{ matrix.vec.dotnetVersion }} -f net${{ matrix.vec.dotnetVersion }} --self-contained true /p:PublishSingleFile=true && popd
     - name: Docker Run
       run: |
         docker run -v $(pwd):/main ${{ matrix.vec.image }} /main/scripts/docker-script.sh ${{ matrix.vec.arch }} ${{ matrix.vec.config }} ${{ matrix.vec.tls }} ${{ matrix.vec.dotnetVersion }}

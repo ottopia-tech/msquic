@@ -302,7 +302,7 @@ QuicMainStart(
     }
 
 #ifndef _KERNEL_MODE
-    WorkerPool = CxPlatWorkerPoolCreate(nullptr);
+    WorkerPool = CxPlatWorkerPoolCreate(nullptr, CXPLAT_WORKER_POOL_REF_TOOL);
 #endif
 
     const CXPLAT_UDP_DATAPATH_CALLBACKS DatapathCallbacks = {
@@ -313,7 +313,7 @@ QuicMainStart(
     Status = CxPlatDataPathInitialize(0, &DatapathCallbacks, &TcpEngine::TcpCallbacks, WorkerPool, &InitConfig, &Datapath);
     if (QUIC_FAILED(Status)) {
 #ifndef _KERNEL_MODE
-        CxPlatWorkerPoolDelete(WorkerPool);
+        CxPlatWorkerPoolDelete(WorkerPool, CXPLAT_WORKER_POOL_REF_TOOL);
 #endif
         WriteOutput("Datapath for shutdown failed to initialize: %d\n", Status);
         return Status;
@@ -359,7 +359,7 @@ QuicMainFree(
     if (Datapath) {
         CxPlatDataPathUninitialize(Datapath);
 #ifndef _KERNEL_MODE
-        CxPlatWorkerPoolDelete(WorkerPool);
+        CxPlatWorkerPoolDelete(WorkerPool, CXPLAT_WORKER_POOL_REF_TOOL);
 #endif
         Datapath = nullptr;
     }
@@ -389,8 +389,8 @@ const uint64_t SizeMult[] = { 1000 * 1000 * 1000, 1000 * 1000, 1000, 1 };
 const char* CountUnits[] = { "cpu" };
 uint64_t CountMult[] = { 1 };
 
-_Success_(return != false)
 template <typename T>
+_Success_(return != false)
 bool
 TryGetVariableUnitValue(
     _In_ int argc,
@@ -448,8 +448,8 @@ TryGetVariableUnitValue(
     return true;
 }
 
-_Success_(return != false)
 template <typename T>
+_Success_(return != false)
 bool
 TryGetVariableUnitValue(
     _In_ int argc,
@@ -466,8 +466,8 @@ TryGetVariableUnitValue(
 /// <summary>
 /// Explicit template instantiation
 /// </summary>
-_Success_(return != false)
 template
+_Success_(return != false)
 bool
 TryGetVariableUnitValue<uint32_t>(
     _In_ int argc,
@@ -477,8 +477,8 @@ TryGetVariableUnitValue<uint32_t>(
     _Out_opt_ bool* isTimed
     );
 
-_Success_(return != false)
 template
+_Success_(return != false)
 bool
 TryGetVariableUnitValue<uint64_t>(
     _In_ int argc,

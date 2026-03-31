@@ -138,6 +138,7 @@ constexpr _Ty&& CxPlatForward(
 }
 
 #ifdef __GNUC__
+#pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmultichar" // Multi-character constant used intentionally for the tag
 #endif
 template<typename T, uint32_t Tag = 'lPxC', bool Paged = false>
@@ -162,6 +163,9 @@ public:
         }
     }
 };
+#ifdef __GNUC__
+#pragma GCC diagnostic pop
+#endif
 
 #ifdef CXPLAT_HASH_MIN_SIZE
 
@@ -204,8 +208,8 @@ struct CxPlatHashTable {
 
 class CxPlatThread {
     CXPLAT_THREAD Thread {0};
-    bool Initialized : 1;
-    bool WaitOnDelete : 1;
+    bool Initialized{};
+    bool WaitOnDelete{};
 public:
     CxPlatThread(bool WaitOnDelete = true) noexcept : Initialized(false), WaitOnDelete(WaitOnDelete) { }
     ~CxPlatThread() noexcept {

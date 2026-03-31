@@ -334,26 +334,43 @@ function Install-JOM {
     }
 }
 
-# Installs OpenCppCoverage from the public release.
-function Install-OpenCppCoverage {
-    if (!$IsWindows) { return } # Windows only
-    if (!(Test-Path "C:\Program Files\OpenCppCoverage\OpenCppCoverage.exe")) {
-        # Download the installer.
-        $Installer = $null
-        if ([System.Environment]::Is64BitOperatingSystem) {
-            $Installer = "OpenCppCoverageSetup-x64-0.9.9.0.exe"
-        } else {
-            $Installer = "OpenCppCoverageSetup-x86-0.9.9.0.exe"
-        }
-        $ExeFile = Join-Path $Env:TEMP $Installer
-        Write-Host "Downloading $Installer"
-        Invoke-WebRequest -Uri "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/$($Installer)" -OutFile $ExeFile
+# Installs OpenCppCoverage on Windows or gcovr on Linux.
+function Install-CodeCoverage {
+    if ($IsWindows) {
+        if (!(Test-Path "C:\Program Files\OpenCppCoverage\OpenCppCoverage.exe")) {
+            # Download the installer.
+            $Installer = $null
+            if ([System.Environment]::Is64BitOperatingSystem) {
+                $Installer = "OpenCppCoverageSetup-x64-0.9.9.0.exe"
+            } else {
+                $Installer = "OpenCppCoverageSetup-x86-0.9.9.0.exe"
+            }
+            $ExeFile = Join-Path $Env:TEMP $Installer
+            Write-Host "Downloading $Installer"
+            Invoke-WebRequest -Uri "https://github.com/OpenCppCoverage/OpenCppCoverage/releases/download/release-0.9.9.0/$($Installer)" -OutFile $ExeFile
 
-        # Start the installer and wait for it to finish.
-        Write-Host "Installing $Installer"
-        Start-Process $ExeFile -Wait -ArgumentList {"/silent"} -NoNewWindow
-        Remove-Item -Path $ExeFile
-    }
+            # Start the installer and wait for it to finish.
+            Write-Host "Installing $Installer"
+            Start-Process $ExeFile -Wait -ArgumentList {"/silent"} -NoNewWindow
+            Remove-Item -Path $ExeFile
+        }
+    } elseif ($IsLinux) {
+        $GcovrVersion = 8.6
+        # Nothing to do if gcovr is already installed
+        if (Get-Command gcovr -ErrorAction SilentlyContinue) {
+            Write-Host "gcovr is already installed"
+            return
+        }
+        # Check if pip is already installed, and if not, install it
+        if (Get-Command pip -ErrorAction SilentlyContinue) {
+            Write-Host "pip is already installed"
+        } else {
+            Write-Host "Installing pip"
+            sudo apt-get update -y
+            sudo apt-get install -y pip
+        }
+        pip install gcovr==$GcovrVersion
+    } 
 }
 
 # Installs StrawberryPerl on Windows via Winget.
@@ -488,6 +505,24 @@ function Install-Clog2Text {
     Install-DotnetTool -ToolName "Microsoft.Logging.CLOG2Text.Lttng" -Version "0.0.1" -NuGetPath $NuGetPath
 }
 
+function Install-ProcDump {
+    if (!$IsWindows) { throw "ProcDump is Windows-only." }
+
+    $toolDir = Join-Path $RootDir "artifacts" "tools" "procdump"
+    New-Item -ItemType Directory -Force -Path $toolDir | Out-Null
+
+    $zipPath = Join-Path $toolDir "procdump.zip"
+    $url = "https://download.sysinternals.com/files/Procdump.zip"  # official Sysinternals download
+    Invoke-WebRequest -Uri $url -OutFile $zipPath -UseBasicParsing
+
+    Expand-Archive -Path $zipPath -DestinationPath $toolDir -Force
+
+    $pd = Join-Path $toolDir "procdump.exe"
+    if (!(Test-Path $pd)) {
+        throw "ProcDump download/extract succeeded but procdump.exe not found at expected path: $pd"
+    }
+}
+
 # We remove OpenSSL path for kernel builds because it's not needed.
 if ($ForKernel) {
     git rm $RootDir/submodules/quictls
@@ -521,6 +556,11 @@ if ($ForBuild -or $ForContainerBuild) {
     git submodule update --jobs=8
 }
 
+if ($IsWindows -and $ForTest) {
+    # Install Procdump for crash dump collection.
+    Install-ProcDump
+}
+
 if ($InstallCoreNetCiDeps) { Download-CoreNet-Deps }
 if ($InstallSigningCertificates) { Install-SigningCertificates }
 if ($InstallDuoNic) { Install-DuoNic }
@@ -529,7 +569,7 @@ if ($UninstallXdp) { Uninstall-Xdp }
 if ($InstallNasm) { Install-NASM }
 if ($InstallJOM) { Install-JOM }
 if ($InstallPerl) { Install-Perl }
-if ($InstallCodeCoverage) { Install-OpenCppCoverage }
+if ($InstallCodeCoverage) { Install-CodeCoverage }
 if ($InstallTestCertificates) { Install-TestCertificates }
 
 if ($IsLinux) {

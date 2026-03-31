@@ -19,18 +19,9 @@ TestConnection::TestConnection(
     _In_opt_ NEW_STREAM_CALLBACK_HANDLER NewStreamCallbackHandler
     ) :
     QuicConnection(Handle),
-    IsServer(true), IsStarted(true), IsConnected(false), Resumed(false),
-    PeerAddrChanged(false), PeerClosed(false), TransportClosed(false),
-    IsShutdown(false), ShutdownTimedOut(false), AutoDelete(false), AsyncCustomValidation(false),
-    CustomValidationResultSet(false), ExpectedResumed(false), ExpectedCustomTicketValidationResult(QUIC_STATUS_SUCCESS),
-    ExpectedTransportCloseStatus(QUIC_STATUS_SUCCESS), ExpectedPeerCloseErrorCode(QUIC_TEST_NO_ERROR),
-    ExpectedClientCertValidationResult{}, ExpectedClientCertValidationResultCount(0),
-    ExpectedCustomValidationResult(false), PeerCertEventReturnStatus(QUIC_STATUS_SUCCESS),
-    EventDeleted(nullptr),
-    NewStreamCallback(NewStreamCallbackHandler), ShutdownCompleteCallback(nullptr),
-    DatagramsSent(0), DatagramsCanceled(0), DatagramsSuspectLost(0),
-    DatagramsLost(0), DatagramsAcknowledged(0), NegotiatedAlpn(nullptr),
-    NegotiatedAlpnLength(0), SslKeyLogFileName(nullptr), Context(nullptr)
+    IsServer(true),
+    IsStarted(true),
+    NewStreamCallback(NewStreamCallbackHandler)
 {
     CxPlatEventInitialize(&EventConnectionComplete, TRUE, FALSE);
     CxPlatEventInitialize(&EventPeerClosed, TRUE, FALSE);
@@ -52,19 +43,7 @@ TestConnection::TestConnection(
     _In_ MsQuicRegistration& Registration,
     _In_opt_ NEW_STREAM_CALLBACK_HANDLER NewStreamCallbackHandler
     ) :
-    QuicConnection(nullptr),
-    IsServer(false), IsStarted(false), IsConnected(false), Resumed(false),
-    PeerAddrChanged(false), PeerClosed(false), TransportClosed(false),
-    IsShutdown(false), ShutdownTimedOut(false), AutoDelete(false), AsyncCustomValidation(false),
-    CustomValidationResultSet(false), ExpectedResumed(false), ExpectedCustomTicketValidationResult(QUIC_STATUS_SUCCESS),
-    ExpectedTransportCloseStatus(QUIC_STATUS_SUCCESS), ExpectedPeerCloseErrorCode(QUIC_TEST_NO_ERROR),
-    ExpectedClientCertValidationResult{}, ExpectedClientCertValidationResultCount(0),
-    ExpectedCustomValidationResult(false), PeerCertEventReturnStatus(QUIC_STATUS_SUCCESS),
-    EventDeleted(nullptr),
-    NewStreamCallback(NewStreamCallbackHandler), ShutdownCompleteCallback(nullptr),
-    DatagramsSent(0), DatagramsCanceled(0), DatagramsSuspectLost(0),
-    DatagramsLost(0), DatagramsAcknowledged(0), NegotiatedAlpn(nullptr),
-    NegotiatedAlpnLength(0), SslKeyLogFileName(nullptr), Context(nullptr)
+    NewStreamCallback(NewStreamCallbackHandler)
 {
     CxPlatEventInitialize(&EventConnectionComplete, TRUE, FALSE);
     CxPlatEventInitialize(&EventPeerClosed, TRUE, FALSE);
@@ -243,29 +222,17 @@ TestConnection::WaitForPeerClose()
 QUIC_STATUS
 TestConnection::ForceKeyUpdate()
 {
-    QUIC_STATUS Status;
-    uint32_t Try = 0;
-
-    do {
-        //
-        // Forcing a key update is only allowed when the handshake is confirmed.
-        // So, even if the caller waits for connection complete, it's possible
-        // the call can fail with QUIC_STATUS_INVALID_STATE. To get around this
-        // we allow for a couple retries (with some sleeps).
-        //
-        if (Try != 0) {
-            CxPlatSleep(100);
-        }
-        Status =
-            MsQuic->SetParam(
-                QuicConnection,
-                QUIC_PARAM_CONN_FORCE_KEY_UPDATE,
-                0,
-                nullptr);
-
-    } while (Status == QUIC_STATUS_INVALID_STATE && ++Try <= 20);
-
-    return Status;
+    //
+    // Forcing a key update is only allowed when the handshake is confirmed.
+    // So, even if the caller waits for connection complete, it's possible
+    // the call fails with QUIC_STATUS_INVALID_STATE.
+    // Allow for a couple retries.
+    //
+    return TryUntil(100, 2000, [&]() {
+        const auto Status =
+            MsQuic->SetParam(QuicConnection, QUIC_PARAM_CONN_FORCE_KEY_UPDATE, 0, nullptr);
+        return Status == QUIC_STATUS_INVALID_STATE ? QUIC_STATUS_CONTINUE : Status;
+    });
 }
 
 QUIC_STATUS
@@ -827,6 +794,34 @@ TestConnection::HandleConnectionEvent(
     _Inout_ QUIC_CONNECTION_EVENT* Event
     )
 {
+    // Handle QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE separately: the connection may be deleted
+    // during this event (via callback or AutoDelete), we need to ensure nothing referencing the
+    // connection runs after its deletion.
+    if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
+        CONN_SHUTDOWN_COMPLETE_CALLBACK_HANDLER Callback = nullptr;
+        bool ShouldDelete = false;
+        {
+            LockGuard LockScope{Lock};
+            IsShutdown = TRUE;
+            ShutdownTimedOut = Event->SHUTDOWN_COMPLETE.PeerAcknowledgedShutdown == FALSE;
+            Callback = ShutdownCompleteCallback;
+            ShouldDelete = AutoDelete;
+            CxPlatEventSet(EventShutdownComplete);
+        }
+
+        if (Callback) {
+            Callback(this);
+        }
+        if (ShouldDelete) {
+            delete this;
+        }
+        // No further reference to "this" is allowed after this point.
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    // Handle all other events under lock.
+    LockGuard LockScope{Lock};
+
     switch (Event->Type) {
 
     case QUIC_CONNECTION_EVENT_CONNECTED:
@@ -880,17 +875,6 @@ TestConnection::HandleConnectionEvent(
         CxPlatEventSet(EventPeerClosed);
         break;
 
-    case QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE:
-        IsShutdown = TRUE;
-        ShutdownTimedOut = Event->SHUTDOWN_COMPLETE.PeerAcknowledgedShutdown == FALSE;
-        CxPlatEventSet(EventShutdownComplete);
-        if (ShutdownCompleteCallback) {
-            ShutdownCompleteCallback(this);
-        }
-        if (AutoDelete) {
-            delete this;
-        }
-        break;
 
     case QUIC_CONNECTION_EVENT_PEER_ADDRESS_CHANGED:
         PeerAddrChanged = true;
@@ -998,10 +982,13 @@ TestConnection::HandleConnectionEvent(
             return PeerCertEventReturnStatus;
         }
         break;
+
     case QUIC_CONNECTION_EVENT_RESUMED:
         return ExpectedCustomTicketValidationResult;
 
     default:
+        // The shutdown event is handled before the switch.
+        CXPLAT_DBG_ASSERT(Event->Type != QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE);
         break;
     }
 
@@ -1029,12 +1016,14 @@ TestConnection::GetDestCidUpdateCount()
 const uint8_t*
 TestConnection::GetNegotiatedAlpn() const
 {
+    LockGuard LockScope{Lock};
     return NegotiatedAlpn;
 }
 
 uint8_t
 TestConnection::GetNegotiatedAlpnLength() const
 {
+    LockGuard LockScope{Lock};
     return NegotiatedAlpnLength;
 }
 

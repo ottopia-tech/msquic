@@ -86,6 +86,7 @@ QuicConnAlloc(
 
 #if DEBUG
     InterlockedIncrement(&MsQuicLib.ConnectionCount);
+    QuicLibraryTrackDbgObject(QUIC_DBG_OBJECT_TYPE_CONNECTION, &Connection->DbgObjectLink);
 #endif
     QuicPerfCounterIncrement(Connection->Partition, QUIC_PERF_COUNTER_CONN_CREATED);
     QuicPerfCounterIncrement(Connection->Partition, QUIC_PERF_COUNTER_CONN_ACTIVE);
@@ -101,7 +102,8 @@ QuicConnAlloc(
 
     Connection->RefCount = 1;
 #if DEBUG
-    Connection->RefTypeCount[QUIC_CONN_REF_HANDLE_OWNER] = 1;
+    CxPlatRefInitializeMultiple(Connection->RefTypeBiasedCount, QUIC_CONN_REF_COUNT);
+    CxPlatRefIncrement(&Connection->RefTypeBiasedCount[QUIC_CONN_REF_HANDLE_OWNER]);
 #endif
     Connection->PartitionID = PartitionId;
     Connection->State.Allocated = TRUE;
@@ -412,6 +414,9 @@ QuicConnFree(
         CXPLAT_FREE(Connection->CloseReasonPhrase, QUIC_POOL_CLOSE_REASON);
     }
     Connection->State.Freed = TRUE;
+#if DEBUG
+    QuicLibraryUntrackDbgObject(QUIC_DBG_OBJECT_TYPE_CONNECTION, &Connection->DbgObjectLink);
+#endif
     QuicTraceEvent(
         ConnDestroyed,
         "[conn][%p] Destroyed",
@@ -687,11 +692,14 @@ QuicConnIndicateEvent(
         // MsQuic shouldn't indicate reentrancy to the app when at all possible.
         // The general exception to this rule is when the connection is being
         // closed because the API MUST block until all work is completed, so we
-        // have to execute the event callbacks inline.
+        // have to execute the event callbacks inline. Custom executions always
+        // have InlineApiExecution set, which makes this reentrancy check
+        // unreliable, so it is skipped for custom executions.
         //
         CXPLAT_DBG_ASSERT(
             !Connection->State.InlineApiExecution ||
-            Connection->State.HandleClosed);
+            Connection->State.HandleClosed ||
+            MsQuicLib.CustomExecutions);
         Status =
             Connection->ClientCallbackHandler(
                 (HQUIC)Connection,
@@ -2105,7 +2113,7 @@ _IRQL_requires_max_(PASSIVE_LEVEL)
 BOOLEAN
 QuicConnRecvResumptionTicket(
     _In_ QUIC_CONNECTION* Connection,
-    _In_ uint16_t TicketLength,
+    _In_ uint32_t TicketLength,
     _In_reads_(TicketLength)
         const uint8_t* Ticket
     )
@@ -2126,13 +2134,22 @@ QuicConnRecvResumptionTicket(
         }
         Connection->Crypto.TicketValidationPending = TRUE;
 
+        if (TicketLength > UINT16_MAX) {
+            QuicTraceEvent(
+                ConnError,
+                "[conn][%p] ERROR, %s.",
+                Connection,
+                "Resumption Ticket length too large");
+            goto Error;
+        }
+
         const uint8_t* AppData = NULL;
         uint32_t AppDataLength = 0;
 
         QUIC_STATUS Status =
             QuicCryptoDecodeServerTicket(
                 Connection,
-                TicketLength,
+                (uint16_t)TicketLength,
                 Ticket,
                 Connection->Configuration->AlpnList,
                 Connection->Configuration->AlpnListLength,
@@ -5909,6 +5926,11 @@ QuicConnRecvDatagrams(
 
     if (!Connection->State.UpdateWorker && Connection->State.Connected &&
         !Connection->State.ShutdownComplete && RecvState.UpdatePartitionId) {
+        //
+        // Packets were received on a different partition than the one assigned to the connection.
+        // Migrate the connection to a new worker. New CIDs must be generated since the partition
+        // id is encoded in the CID.
+        //
         CXPLAT_DBG_ASSERT(Connection->Registration);
         CXPLAT_DBG_ASSERT(!Connection->Registration->NoPartitioning);
         CXPLAT_DBG_ASSERT(RecvState.PartitionIndex != QuicPartitionIdGetIndex(Connection->PartitionID));

@@ -327,6 +327,13 @@ typedef struct QUIC_CONNECTION {
     //
     CXPLAT_LIST_ENTRY RegistrationLink;
 
+#if DEBUG
+    //
+    // Link into the global debug object tracker.
+    //
+    CXPLAT_LIST_ENTRY DbgObjectLink;
+#endif
+
     //
     // Link in the worker's connection queue.
     // N.B. Multi-threaded access, synchronized by worker's connection lock.
@@ -374,8 +381,10 @@ typedef struct QUIC_CONNECTION {
 #if DEBUG
     //
     // Detailed ref counts
+    // Note: These ref counts are biased by 1, so lowest they go is 1. It is an
+    // error for them to ever be zero.
     //
-    short RefTypeCount[QUIC_CONN_REF_COUNT];
+    CXPLAT_REF_COUNT RefTypeBiasedCount[QUIC_CONN_REF_COUNT];
 #endif
 
     //
@@ -1081,12 +1090,13 @@ QuicConnAddRef(
     QuicConnValidate(Connection);
 
 #if DEBUG
-    InterlockedIncrement16((volatile short*)&Connection->RefTypeCount[Ref]);
+    CxPlatRefIncrement(&Connection->RefTypeBiasedCount[Ref]);
 #else
     UNREFERENCED_PARAMETER(Ref);
 #endif
 
-    InterlockedIncrement((volatile long*)&Connection->RefCount);
+    CXPLAT_FRE_ASSERT(Connection->RefCount < INT32_MAX);
+    InterlockedIncrement(&Connection->RefCount);
 }
 
 //
@@ -1106,20 +1116,13 @@ QuicConnRelease(
     QuicConnValidate(Connection);
 
 #if DEBUG
-    CXPLAT_TEL_ASSERT(Connection->RefTypeCount[Ref] > 0);
-    uint16_t result = (uint16_t)InterlockedDecrement16((volatile short*)&Connection->RefTypeCount[Ref]);
-    CXPLAT_TEL_ASSERT(result != UINT16_MAX);
+    CXPLAT_TEL_ASSERT(!CxPlatRefDecrement(&Connection->RefTypeBiasedCount[Ref]));
 #else
     UNREFERENCED_PARAMETER(Ref);
 #endif
 
-    CXPLAT_DBG_ASSERT(Connection->RefCount > 0);
-    if (InterlockedDecrement((volatile long*)&Connection->RefCount) == 0) {
-#if DEBUG
-        for (uint32_t i = 0; i < QUIC_CONN_REF_COUNT; i++) {
-            CXPLAT_TEL_ASSERT(Connection->RefTypeCount[i] == 0);
-        }
-#endif
+    CXPLAT_FRE_ASSERT(Connection->RefCount > 0);
+    if (InterlockedDecrement(&Connection->RefCount) == 0) {
         if (Ref == QUIC_CONN_REF_LOOKUP_RESULT) {
             //
             // Lookup results cannot be the last ref, as they can result in the
@@ -1129,6 +1132,11 @@ QuicConnRelease(
             CXPLAT_DBG_ASSERT(Connection->Worker != NULL);
             QuicWorkerQueueConnection(Connection->Worker, Connection);
         } else {
+#if DEBUG
+            for (uint32_t i = 0; i < QUIC_CONN_REF_COUNT; i++) {
+                CXPLAT_DBG_ASSERT(Connection->RefTypeBiasedCount[i] == 1);
+            }
+#endif
             QuicConnFree(Connection);
         }
     }

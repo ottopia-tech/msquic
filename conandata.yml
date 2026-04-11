@@ -1,0 +1,4 @@
+sources:
+  "2.3.5":
+    url: "https://github.com/ottopia-tech/msquic.git"
+    commit: "933f7b79949bc588945672396d70b661143bb8f0"

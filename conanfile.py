@@ -59,6 +59,13 @@ class MsQuicConan(ConanFile):
         tc.cache_variables["QUIC_BUILD_TEST"] = "OFF"
         tc.cache_variables["QUIC_BUILD_TOOLS"] = "OFF"
         tc.cache_variables["QUIC_BUILD_PERF"] = "OFF"
+        # msquic's CMakeLists auto-links libnuma if it can find it on the
+        # build host, baking a libnuma dependency into libmsquic.so. That
+        # breaks consumers on hosts without libnuma (e.g. ottopia's aarch64
+        # CI runner) and forces every deployment target to ship libnuma.
+        # Force the find_library result so the resulting library is portable.
+        tc.cache_variables["NUMA"] = "NUMA-NOTFOUND"
+        tc.cache_variables["NUMA-HEADER"] = "NUMA-HEADER-NOTFOUND"
         tc.generate()
 
     def build(self):

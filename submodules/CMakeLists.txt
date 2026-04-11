@@ -224,6 +224,16 @@ else()
                 linux-armv4 -DL_ENDIAN
                 --cross-compile-prefix=${GNU_MACHINE}${FLOAT_ABI_SUFFIX}-)
             list(APPEND OPENSSL_CONFIG_FLAGS -latomic)
+        elseif(CMAKE_SYSTEM_PROCESSOR STREQUAL "aarch64" OR CMAKE_SYSTEM_PROCESSOR STREQUAL "arm64")
+            # When cross-compiling to aarch64 (e.g. via a Conan/Yocto toolchain),
+            # CMAKE_TARGET_ARCHITECTURE is not populated, so the fallback below
+            # would invoke openssl/config which host-auto-detects linux-x86_64
+            # and emits -m64. Pin the Configure target explicitly and honor the
+            # toolchain's compiler.
+            set(OPENSSL_CONFIG_CMD ${CMAKE_CURRENT_SOURCE_DIR}/${QUIC_OPENSSL}/Configure
+                linux-aarch64
+                CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER})
+            list(APPEND OPENSSL_CONFIG_FLAGS -latomic)
         else()
             if (CMAKE_TARGET_ARCHITECTURE STREQUAL arm64)
                 if (ONEBRANCH)

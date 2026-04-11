@@ -234,6 +234,12 @@ else()
                 linux-aarch64
                 CC=${CMAKE_C_COMPILER} CXX=${CMAKE_CXX_COMPILER})
             list(APPEND OPENSSL_CONFIG_FLAGS -latomic)
+            # Yocto/OE SDK toolchains (e.g. qualcomm's aarch64-oe-linux-gcc)
+            # require --sysroot to locate libc headers; forward it when the
+            # outer toolchain file set CMAKE_SYSROOT.
+            if(CMAKE_SYSROOT)
+                list(APPEND OPENSSL_CONFIG_FLAGS --sysroot=${CMAKE_SYSROOT})
+            endif()
         else()
             if (CMAKE_TARGET_ARCHITECTURE STREQUAL arm64)
                 if (ONEBRANCH)

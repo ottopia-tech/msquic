@@ -88,4 +88,4 @@ class MsQuicConan(ConanFile):
         self.cpp_info.set_property("cmake_file_name", "msquic")
         self.cpp_info.set_property("cmake_target_name", "msquic")
         if self.settings.os == "Linux":
-            self.cpp_info.system_libs = ["pthread", "dl", "m", "numa", "atomic"]
+            self.cpp_info.system_libs = ["pthread", "dl", "m", "atomic"]

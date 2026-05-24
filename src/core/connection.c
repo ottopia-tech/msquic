@@ -7210,6 +7210,16 @@ QuicConnParamSet(
         Status = QUIC_STATUS_SUCCESS;
         break;
 
+    case QUIC_PARAM_CONN_PATH_SELECTOR:
+
+        if (BufferLength != sizeof(QUIC_PATH_SELECTOR) || Buffer == NULL) {
+            Status = QUIC_STATUS_INVALID_PARAMETER;
+            break;
+        }
+        Connection->PathSelector = *(const QUIC_PATH_SELECTOR*)Buffer;
+        Status = QUIC_STATUS_SUCCESS;
+        break;
+
     //
     // Private
     //

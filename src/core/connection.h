@@ -656,6 +656,10 @@ typedef struct QUIC_CONNECTION {
 
     QUIC_PATHID_SET PathIDs;
 
+    // Pluggable path-selection algorithm.  NULL = built-in random.
+    // Set via QUIC_PARAM_CONN_PATH_SELECTOR before or after handshake.
+    QUIC_PATH_SELECTOR PathSelector;
+
 } QUIC_CONNECTION;
 
 typedef struct QUIC_SERIALIZED_RESUMPTION_STATE {

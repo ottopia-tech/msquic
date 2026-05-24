@@ -347,9 +347,26 @@ QuicConnChoosePath(
             }
         }
         if (ActivePathCount > 0) {
-            uint8_t Random;
-            CxPlatRandom(sizeof(Random), &Random);
-            Path = ActivePaths[Random % ActivePathCount];
+            if (Connection->PathSelector.Fn != NULL) {
+                QUIC_PATH_METRICS Metrics[QUIC_MAX_PATH_COUNT];
+                for (uint8_t i = 0; i < ActivePathCount; ++i) {
+                    Metrics[i].PathId               = ActivePaths[i]->PathID->ID;
+                    Metrics[i].SmoothedRttUs        = (uint32_t)(ActivePaths[i]->SmoothedRtt / 1000);
+                    Metrics[i].CongestionWindowBytes =
+                        QuicCongestionControlGetCongestionWindow(&ActivePaths[i]->PathID->CongestionControl);
+                    Metrics[i].BytesInFlightMax     =
+                        QuicCongestionControlGetBytesInFlightMax(&ActivePaths[i]->PathID->CongestionControl);
+                }
+                uint32_t Chosen = Connection->PathSelector.Fn(
+                    Metrics, ActivePathCount, Connection->PathSelector.Context);
+                if (Chosen < ActivePathCount) {
+                    Path = ActivePaths[Chosen];
+                }
+            } else {
+                uint8_t Random;
+                CxPlatRandom(sizeof(Random), &Random);
+                Path = ActivePaths[Random % ActivePathCount];
+            }
         }
     }
 

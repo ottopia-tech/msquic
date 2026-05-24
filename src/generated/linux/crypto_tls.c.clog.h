@@ -620,6 +620,86 @@ tracepoint(CLOG_CRYPTO_TLS_C, EncodeTPTimestamp , arg1, arg3);\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for DecodeTPInitMaxClientPaths
+// [conn][%p] TP: Max Client Paths (%llu)
+// QuicTraceLogConnVerbose(
+                DecodeTPInitMaxClientPaths,
+                Connection,
+                "TP: Max Client Paths (%llu)",
+                TransportParams->InitialMaxClientPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxClientPaths = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_DecodeTPInitMaxClientPaths
+#define _clog_4_ARGS_TRACE_DecodeTPInitMaxClientPaths(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CRYPTO_TLS_C, DecodeTPInitMaxClientPaths , arg1, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for DecodeTPInitMaxServerPaths
+// [conn][%p] TP: Max Server Paths (%llu)
+// QuicTraceLogConnVerbose(
+                DecodeTPInitMaxServerPaths,
+                Connection,
+                "TP: Max Server Paths (%llu)",
+                TransportParams->InitialMaxServerPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxServerPaths = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_DecodeTPInitMaxServerPaths
+#define _clog_4_ARGS_TRACE_DecodeTPInitMaxServerPaths(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CRYPTO_TLS_C, DecodeTPInitMaxServerPaths , arg1, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for EncodeTPInitMaxClientPaths
+// [conn][%p] TP: Max Client Paths (%llu)
+// QuicTraceLogConnVerbose(
+            EncodeTPInitMaxClientPaths,
+            Connection,
+            "TP: Max Client Paths (%llu)",
+            TransportParams->InitialMaxClientPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxClientPaths = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_EncodeTPInitMaxClientPaths
+#define _clog_4_ARGS_TRACE_EncodeTPInitMaxClientPaths(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CRYPTO_TLS_C, EncodeTPInitMaxClientPaths , arg1, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for EncodeTPInitMaxServerPaths
+// [conn][%p] TP: Max Server Paths (%llu)
+// QuicTraceLogConnVerbose(
+            EncodeTPInitMaxServerPaths,
+            Connection,
+            "TP: Max Server Paths (%llu)",
+            TransportParams->InitialMaxServerPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxServerPaths = arg3
+----------------------------------------------------------*/
+#ifndef _clog_4_ARGS_TRACE_EncodeTPInitMaxServerPaths
+#define _clog_4_ARGS_TRACE_EncodeTPInitMaxServerPaths(uniqueId, arg1, encoded_arg_string, arg3)\
+tracepoint(CLOG_CRYPTO_TLS_C, EncodeTPInitMaxServerPaths , arg1, arg3);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for EncodeTPTest
 // [conn][%p] TP: TEST TP (Type %hu, Length %hu)
 // QuicTraceLogConnVerbose(

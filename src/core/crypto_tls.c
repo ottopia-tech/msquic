@@ -68,6 +68,8 @@ typedef enum eSniNameType {
 #define QUIC_TP_ID_GREASE_QUIC_BIT                          0x2AB2          // N/A
 #define QUIC_TP_ID_RELIABLE_RESET_ENABLED                   0x17f7586d2cb570   // varint
 #define QUIC_TP_ID_ENABLE_TIMESTAMP                         0x7158          // varint
+#define QUIC_TP_ID_INITIAL_MAX_CLIENT_PATHS                 0x0f739bbc1b666d08  // varint
+#define QUIC_TP_ID_INITIAL_MAX_SERVER_PATHS                 0x0f739bbc1b666d09  // varint
 
 BOOLEAN
 QuicTpIdIsReserved(
@@ -904,6 +906,18 @@ QuicCryptoTlsEncodeTransportParameters(
                 QUIC_TP_ID_ENABLE_TIMESTAMP,
                 QuicVarIntSize(value));
     }
+    if (TransportParams->Flags & QUIC_TP_FLAG_INITIAL_MAX_CLIENT_PATHS) {
+        RequiredTPLen +=
+            TlsTransportParamLength(
+                QUIC_TP_ID_INITIAL_MAX_CLIENT_PATHS,
+                QuicVarIntSize(TransportParams->InitialMaxClientPaths));
+    }
+    if (TransportParams->Flags & QUIC_TP_FLAG_INITIAL_MAX_SERVER_PATHS) {
+        RequiredTPLen +=
+            TlsTransportParamLength(
+                QUIC_TP_ID_INITIAL_MAX_SERVER_PATHS,
+                QuicVarIntSize(TransportParams->InitialMaxServerPaths));
+    }
     if (TestParam != NULL) {
         RequiredTPLen +=
             TlsTransportParamLength(
@@ -1245,6 +1259,28 @@ QuicCryptoTlsEncodeTransportParameters(
             Connection,
             "TP: Timestamp (%u)",
             value);
+    }
+    if (TransportParams->Flags & QUIC_TP_FLAG_INITIAL_MAX_CLIENT_PATHS) {
+        TPBuf =
+            TlsWriteTransportParamVarInt(
+                QUIC_TP_ID_INITIAL_MAX_CLIENT_PATHS,
+                TransportParams->InitialMaxClientPaths, TPBuf);
+        QuicTraceLogConnVerbose(
+            EncodeTPInitMaxClientPaths,
+            Connection,
+            "TP: Max Client Paths (%llu)",
+            TransportParams->InitialMaxClientPaths);
+    }
+    if (TransportParams->Flags & QUIC_TP_FLAG_INITIAL_MAX_SERVER_PATHS) {
+        TPBuf =
+            TlsWriteTransportParamVarInt(
+                QUIC_TP_ID_INITIAL_MAX_SERVER_PATHS,
+                TransportParams->InitialMaxServerPaths, TPBuf);
+        QuicTraceLogConnVerbose(
+            EncodeTPInitMaxServerPaths,
+            Connection,
+            "TP: Max Server Paths (%llu)",
+            TransportParams->InitialMaxServerPaths);
     }
     if (TestParam != NULL) {
         TPBuf =
@@ -1952,6 +1988,42 @@ QuicCryptoTlsDecodeTransportParameters( // NOLINT(readability-function-size, goo
             TransportParams->Flags |= (uint32_t)value;
             break;
         }
+
+        case QUIC_TP_ID_INITIAL_MAX_CLIENT_PATHS:
+            if (!TRY_READ_VAR_INT(TransportParams->InitialMaxClientPaths)) {
+                QuicTraceEvent(
+                    ConnErrorStatus,
+                    "[conn][%p] ERROR, %u, %s.",
+                    Connection,
+                    Length,
+                    "Invalid length of QUIC_TP_ID_INITIAL_MAX_CLIENT_PATHS");
+                goto Exit;
+            }
+            TransportParams->Flags |= QUIC_TP_FLAG_INITIAL_MAX_CLIENT_PATHS;
+            QuicTraceLogConnVerbose(
+                DecodeTPInitMaxClientPaths,
+                Connection,
+                "TP: Max Client Paths (%llu)",
+                TransportParams->InitialMaxClientPaths);
+            break;
+
+        case QUIC_TP_ID_INITIAL_MAX_SERVER_PATHS:
+            if (!TRY_READ_VAR_INT(TransportParams->InitialMaxServerPaths)) {
+                QuicTraceEvent(
+                    ConnErrorStatus,
+                    "[conn][%p] ERROR, %u, %s.",
+                    Connection,
+                    Length,
+                    "Invalid length of QUIC_TP_ID_INITIAL_MAX_SERVER_PATHS");
+                goto Exit;
+            }
+            TransportParams->Flags |= QUIC_TP_FLAG_INITIAL_MAX_SERVER_PATHS;
+            QuicTraceLogConnVerbose(
+                DecodeTPInitMaxServerPaths,
+                Connection,
+                "TP: Max Server Paths (%llu)",
+                TransportParams->InitialMaxServerPaths);
+            break;
 
         default:
             if (QuicTpIdIsReserved(Id)) {

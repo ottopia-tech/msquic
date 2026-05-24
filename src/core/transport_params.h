@@ -152,6 +152,18 @@ typedef struct QUIC_TRANSPORT_PARAMETERS {
     uint32_t VersionInfoLength;
     const uint8_t* VersionInfo;
 
+    //
+    // The initial maximum number of client-initiated paths allowed.
+    //
+    _Field_range_(0, QUIC_TP_MAX_PATHS_MAX)
+    QUIC_VAR_INT InitialMaxClientPaths;
+
+    //
+    // The initial maximum number of server-initiated paths allowed.
+    //
+    _Field_range_(0, QUIC_TP_MAX_PATHS_MAX)
+    QUIC_VAR_INT InitialMaxServerPaths;
+
 } QUIC_TRANSPORT_PARAMETERS;
 
 //

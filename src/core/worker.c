@@ -78,6 +78,7 @@ QuicWorkerInitialize(
     CxPlatListInitializeHead(&Worker->Connections);
     CxPlatListInitializeHead(&Worker->Operations);
     CxPlatPoolInitialize(FALSE, sizeof(QUIC_STREAM), QUIC_POOL_STREAM, &Worker->StreamPool);
+    CxPlatPoolInitialize(FALSE, sizeof(QUIC_PATHID), QUIC_POOL_PATHID, &Worker->PathIDPool);
     CxPlatPoolInitialize(FALSE, sizeof(QUIC_RECV_CHUNK)+QUIC_DEFAULT_STREAM_RECV_BUFFER_SIZE, QUIC_POOL_SBUF, &Worker->DefaultReceiveBufferPool);
     CxPlatPoolInitialize(FALSE, sizeof(QUIC_SEND_REQUEST), QUIC_POOL_SEND_REQUEST, &Worker->SendRequestPool);
     QuicSentPacketPoolInitialize(&Worker->SentPacketPool);
@@ -172,6 +173,7 @@ QuicWorkerUninitialize(
     CXPLAT_TEL_ASSERT(CxPlatListIsEmpty(&Worker->Operations));
 
     CxPlatPoolUninitialize(&Worker->StreamPool);
+    CxPlatPoolUninitialize(&Worker->PathIDPool);
     CxPlatPoolUninitialize(&Worker->DefaultReceiveBufferPool);
     CxPlatPoolUninitialize(&Worker->SendRequestPool);
     QuicSentPacketPoolUninitialize(&Worker->SentPacketPool);

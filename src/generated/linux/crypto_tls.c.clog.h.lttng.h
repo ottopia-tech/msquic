@@ -673,6 +673,98 @@ TRACEPOINT_EVENT(CLOG_CRYPTO_TLS_C, EncodeTPTimestamp,
 
 
 /*----------------------------------------------------------
+// Decoder Ring for DecodeTPInitMaxClientPaths
+// [conn][%p] TP: Max Client Paths (%llu)
+// QuicTraceLogConnVerbose(
+                DecodeTPInitMaxClientPaths,
+                Connection,
+                "TP: Max Client Paths (%llu)",
+                TransportParams->InitialMaxClientPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxClientPaths = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_CRYPTO_TLS_C, DecodeTPInitMaxClientPaths,
+    TP_ARGS(
+        const void *, arg1,
+        unsigned long long, arg3), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg1, arg1)
+        ctf_integer(uint64_t, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for DecodeTPInitMaxServerPaths
+// [conn][%p] TP: Max Server Paths (%llu)
+// QuicTraceLogConnVerbose(
+                DecodeTPInitMaxServerPaths,
+                Connection,
+                "TP: Max Server Paths (%llu)",
+                TransportParams->InitialMaxServerPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxServerPaths = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_CRYPTO_TLS_C, DecodeTPInitMaxServerPaths,
+    TP_ARGS(
+        const void *, arg1,
+        unsigned long long, arg3), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg1, arg1)
+        ctf_integer(uint64_t, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for EncodeTPInitMaxClientPaths
+// [conn][%p] TP: Max Client Paths (%llu)
+// QuicTraceLogConnVerbose(
+            EncodeTPInitMaxClientPaths,
+            Connection,
+            "TP: Max Client Paths (%llu)",
+            TransportParams->InitialMaxClientPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxClientPaths = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_CRYPTO_TLS_C, EncodeTPInitMaxClientPaths,
+    TP_ARGS(
+        const void *, arg1,
+        unsigned long long, arg3), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg1, arg1)
+        ctf_integer(uint64_t, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for EncodeTPInitMaxServerPaths
+// [conn][%p] TP: Max Server Paths (%llu)
+// QuicTraceLogConnVerbose(
+            EncodeTPInitMaxServerPaths,
+            Connection,
+            "TP: Max Server Paths (%llu)",
+            TransportParams->InitialMaxServerPaths);
+// arg1 = arg1 = Connection = arg1
+// arg3 = arg3 = TransportParams->InitialMaxServerPaths = arg3
+----------------------------------------------------------*/
+TRACEPOINT_EVENT(CLOG_CRYPTO_TLS_C, EncodeTPInitMaxServerPaths,
+    TP_ARGS(
+        const void *, arg1,
+        unsigned long long, arg3), 
+    TP_FIELDS(
+        ctf_integer_hex(uint64_t, arg1, arg1)
+        ctf_integer(uint64_t, arg3, arg3)
+    )
+)
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for EncodeTPTest
 // [conn][%p] TP: TEST TP (Type %hu, Length %hu)
 // QuicTraceLogConnVerbose(

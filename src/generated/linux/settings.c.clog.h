@@ -783,6 +783,36 @@ tracepoint(CLOG_SETTINGS_C, SettingNetStatsEventEnabled , arg2);\
 
 
 /*----------------------------------------------------------
+// Decoder Ring for SettingConnIDGenDisabled
+// [sett] NetStatsEventEnabled   = %hhu
+// QuicTraceLogVerbose(SettingConnIDGenDisabled,        "[sett] ConnIDGenDisabled   = %hhu", Settings->ConnIDGenDisabled);
+// arg2 = arg2 = Settings->ConnIDGenDisabled = arg2
+----------------------------------------------------------*/
+#ifndef _clog_3_ARGS_TRACE_SettingConnIDGenDisabled
+#define _clog_3_ARGS_TRACE_SettingConnIDGenDisabled(uniqueId, encoded_arg_string, arg2)\
+tracepoint(CLOG_SETTINGS_C, SettingConnIDGenDisabled , arg2);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
+// Decoder Ring for SettingMultipathEnabled
+// [sett] MultipathEnabled   = %hhu
+// QuicTraceLogVerbose(SettingMultipathEnabled,            "[sett] MultipathEnabled       = %hhu", Settings->MultipathEnabled);
+// arg2 = arg2 = Settings->MultipathEnabled = arg2
+----------------------------------------------------------*/
+#ifndef _clog_3_ARGS_TRACE_SettingMultipathEnabled
+#define _clog_3_ARGS_TRACE_SettingMultipathEnabled(uniqueId, encoded_arg_string, arg2)\
+tracepoint(CLOG_SETTINGS_C, SettingMultipathEnabled , arg2);\
+
+#endif
+
+
+
+
+/*----------------------------------------------------------
 // Decoder Ring for SettingDumpLFixedServerID
 // [sett] FixedServerID          = %u
 // QuicTraceLogVerbose(SettingDumpLFixedServerID,              "[sett] FixedServerID          = %u", Settings->FixedServerID);

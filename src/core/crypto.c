@@ -161,10 +161,10 @@ QuicCryptoInitialize(
 
     if (QuicConnIsServer(Connection)) {
         CXPLAT_DBG_ASSERT(Connection->SourceCids.Next != NULL);
-        QUIC_CID_HASH_ENTRY* SourceCid =
+        QUIC_CID_SLIST_ENTRY* SourceCid =
             CXPLAT_CONTAINING_RECORD(
                 Connection->SourceCids.Next,
-                QUIC_CID_HASH_ENTRY,
+                QUIC_CID_SLIST_ENTRY,
                 Link);
 
         HandshakeCid = SourceCid->CID.Data;
@@ -416,10 +416,10 @@ QuicCryptoOnVersionChange(
 
     if (QuicConnIsServer(Connection)) {
         CXPLAT_DBG_ASSERT(Connection->SourceCids.Next != NULL);
-        QUIC_CID_HASH_ENTRY* SourceCid =
+        QUIC_CID_SLIST_ENTRY* SourceCid =
             CXPLAT_CONTAINING_RECORD(
                 Connection->SourceCids.Next,
-                QUIC_CID_HASH_ENTRY,
+                QUIC_CID_SLIST_ENTRY,
                 Link);
 
         HandshakeCid = SourceCid->CID.Data;
@@ -494,6 +494,10 @@ QuicCryptoHandshakeConfirmed(
     QUIC_PATH* Path = &Connection->Paths[0];
     CXPLAT_DBG_ASSERT(Path->Binding != NULL);
     QuicBindingOnConnectionHandshakeConfirmed(Path->Binding, Connection);
+
+    if (QuicConnOpenNewPaths(Connection)) {
+        QuicSendSetSendFlag(&Connection->Send, QUIC_CONN_SEND_FLAG_PATH_CHALLENGE);
+    }
 
     QuicCryptoDiscardKeys(Crypto, QUIC_PACKET_KEY_HANDSHAKE);
 }
@@ -1588,10 +1592,10 @@ QuicCryptoProcessTlsCompletion(
             CXPLAT_DBG_ASSERT(Connection->SourceCids.Next->Next != NULL);
             CXPLAT_DBG_ASSERT(Connection->SourceCids.Next->Next != NULL);
             CXPLAT_DBG_ASSERT(Connection->SourceCids.Next->Next->Next == NULL);
-            QUIC_CID_HASH_ENTRY* InitialSourceCid =
+            QUIC_CID_SLIST_ENTRY* InitialSourceCid =
                 CXPLAT_CONTAINING_RECORD(
                     Connection->SourceCids.Next->Next,
-                    QUIC_CID_HASH_ENTRY,
+                    QUIC_CID_SLIST_ENTRY,
                     Link);
             CXPLAT_DBG_ASSERT(InitialSourceCid->CID.IsInitial);
             Connection->SourceCids.Next->Next = Connection->SourceCids.Next->Next->Next;
@@ -1602,7 +1606,7 @@ QuicCryptoProcessTlsCompletion(
                 Connection,
                 InitialSourceCid->CID.SequenceNumber,
                 CASTED_CLOG_BYTEARRAY(InitialSourceCid->CID.Length, InitialSourceCid->CID.Data));
-            CXPLAT_FREE(InitialSourceCid, QUIC_POOL_CIDHASH);
+            CXPLAT_FREE(InitialSourceCid, QUIC_POOL_CIDSLIST);
         }
 
         //
@@ -1613,7 +1617,13 @@ QuicCryptoProcessTlsCompletion(
         Connection->State.Connected = TRUE;
         QuicPerfCounterIncrement(QUIC_PERF_COUNTER_CONN_CONNECTED);
 
+#if QUIC_TEST_MANUAL_CONN_ID_GENERATION
+        if (!Connection->State.DisableConnIDGen) {
+            QuicConnGenerateNewSourceCids(Connection, FALSE);
+        }
+#else
         QuicConnGenerateNewSourceCids(Connection, FALSE);
+#endif
 
         CXPLAT_DBG_ASSERT(Crypto->TlsState.NegotiatedAlpn != NULL);
         if (QuicConnIsClient(Connection)) {
@@ -1647,7 +1657,7 @@ QuicCryptoProcessTlsCompletion(
         }
         Connection->Stats.ResumptionSucceeded = Crypto->TlsState.SessionResumed;
 
-        CXPLAT_DBG_ASSERT(Connection->PathsCount == 1);
+        CXPLAT_DBG_ASSERT(Connection->PathsCount >= 1);
         QUIC_PATH* Path = &Connection->Paths[0];
         CXPLAT_DBG_ASSERT(Path->IsActive);
 

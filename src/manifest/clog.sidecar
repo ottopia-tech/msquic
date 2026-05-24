@@ -3415,6 +3415,38 @@
       ],
       "macroName": "QuicTraceLogConnVerbose"
     },
+    "DecodeTPInitMaxClientPaths": {
+      "ModuleProperites": {},
+      "TraceString": "[conn][%p] TP: Max Local Bidirectional Stream Data (%llu bytes)",
+      "UniqueId": "DecodeTPInitMaxClientPaths",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "p",
+          "MacroVariableName": "arg1"
+        },
+        {
+          "DefinationEncoding": "llu",
+          "MacroVariableName": "arg3"
+        }
+      ],
+      "macroName": "QuicTraceLogConnVerbose"
+    },
+    "DecodeTPInitMaxServerPaths": {
+      "ModuleProperites": {},
+      "TraceString": "[conn][%p] TP: Max Local Bidirectional Stream Data (%llu bytes)",
+      "UniqueId": "DecodeTPInitMaxServerPaths",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "p",
+          "MacroVariableName": "arg1"
+        },
+        {
+          "DefinationEncoding": "llu",
+          "MacroVariableName": "arg3"
+        }
+      ],
+      "macroName": "QuicTraceLogConnVerbose"
+    },
     "DecryptOldKey": {
       "ModuleProperites": {},
       "TraceString": "[conn][%p] Using old key to decrypt",
@@ -3918,6 +3950,38 @@
         },
         {
           "DefinationEncoding": "u",
+          "MacroVariableName": "arg3"
+        }
+      ],
+      "macroName": "QuicTraceLogConnVerbose"
+    },
+    "EncodeTPInitMaxClientPaths": {
+      "ModuleProperites": {},
+      "TraceString": "[conn][%p] TP: Max Client Paths (%llu)",
+      "UniqueId": "EncodeTPMaxClientPaths",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "p",
+          "MacroVariableName": "arg1"
+        },
+        {
+          "DefinationEncoding": "llu",
+          "MacroVariableName": "arg3"
+        }
+      ],
+      "macroName": "QuicTraceLogConnVerbose"
+    },
+    "EncodeTPInitMaxServerPaths": {
+      "ModuleProperites": {},
+      "TraceString": "[conn][%p] TP: Max Server Paths (%llu)",
+      "UniqueId": "EncodeTPMaxServerPaths",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "p",
+          "MacroVariableName": "arg1"
+        },
+        {
+          "DefinationEncoding": "llu",
           "MacroVariableName": "arg3"
         }
       ],
@@ -10474,6 +10538,18 @@
       "ModuleProperites": {},
       "TraceString": "[sett] NetStatsEventEnabled   = %hhu",
       "UniqueId": "SettingNetStatsEventEnabled",
+      "splitArgs": [
+        {
+          "DefinationEncoding": "hhu",
+          "MacroVariableName": "arg2"
+        }
+      ],
+      "macroName": "QuicTraceLogVerbose"
+    },
+    "SettingConnIDGenDisabled": {
+      "ModuleProperites": {},
+      "TraceString": "[sett] ConnIDGenDisabled   = %hhu",
+      "UniqueId": "SettingConnIDGenDisabled",
       "splitArgs": [
         {
           "DefinationEncoding": "hhu",

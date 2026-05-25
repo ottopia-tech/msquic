@@ -651,7 +651,7 @@ CXPLAT_STATIC_ASSERT(
 #define QUIC_TP_MAX_ACK_DELAY_MAX                           ((1 << 14) - 1)
 #define QUIC_TP_MIN_ACK_DELAY_MAX                           ((1 << 24) - 1)
 
-#define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT_DEFAULT          2
+#define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT_DEFAULT          4
 #define QUIC_TP_ACTIVE_CONNECTION_ID_LIMIT_MIN              2
 
 //

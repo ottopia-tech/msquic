@@ -341,6 +341,7 @@ QuicConnChoosePath(
         uint8_t ActivePathCount = 0;
         for (uint8_t i = 0; i < Connection->PathsCount; ++i) {
             if (Connection->Paths[i].IsActive &&
+                Connection->Paths[i].IsPeerValidated &&
                 !Connection->Paths[i].LocalClose &&
                 !Connection->Paths[i].RemoteClose) {
                 ActivePaths[ActivePathCount++] = &Connection->Paths[i];

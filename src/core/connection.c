@@ -248,6 +248,7 @@ QuicConnAlloc(
         PathID->DestCidCount++;
         QuicPathIDAddDestCID(PathID, Path->DestCid);
 
+        PathID->Flags.InUse = TRUE; // initial client path owns PathID 0; prevent GetUnusedPathID reuse
         Connection->State.Initialized = TRUE;
         QuicTraceEvent(
             ConnInitializeComplete,

@@ -351,7 +351,7 @@ else()
     if (HAS_SYSCTL)
          list(APPEND QUIC_COMMON_DEFINES HAS_SYSCTL)
     endif()
-    set(QUIC_WARNING_FLAGS -Werror -Wall -Wextra -Wformat=2 -Wno-type-limits
+    set(QUIC_WARNING_FLAGS -Wall -Wextra -Wformat=2 -Wno-type-limits
         -Wno-unknown-pragmas -Wno-multichar -Wno-missing-field-initializers
         CACHE INTERNAL "")
     if (CMAKE_COMPILER_IS_GNUCC AND CMAKE_CXX_COMPILER_VERSION VERSION_LESS 7.0)

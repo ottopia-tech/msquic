@@ -1051,7 +1051,34 @@ typedef struct QUIC_SCHANNEL_CREDENTIAL_ATTRIBUTE_W {
 #define QUIC_PARAM_CONN_ADD_LOCAL_ADDRESS               0x0500001B  // QUIC_ADDR
 #define QUIC_PARAM_CONN_REMOVE_LOCAL_ADDRESS            0x0500001C  // QUIC_ADDR
 #define QUIC_PARAM_CONN_PATH_STATUS                     0x0500001D  // QUIC_PATH_STATUS
+#define QUIC_PARAM_CONN_PATH_SELECTOR                   0x0500001E  // QUIC_PATH_SELECTOR
 #endif
+
+//
+// Per-path metrics passed to QUIC_PATH_SELECTOR_FN on every datagram send.
+//
+typedef struct QUIC_PATH_METRICS {
+    uint32_t PathId;               // msquic PathID->ID
+    uint32_t SmoothedRttUs;        // smoothed RTT in microseconds
+    uint32_t CongestionWindowBytes;// current congestion window
+    uint32_t BytesInFlightMax;     // peak bytes-in-flight (proxy for utilisation)
+} QUIC_PATH_METRICS;
+
+//
+// Callback type: called from QuicConnChoosePath with metrics for all active
+// paths.  Return the index (0 .. PathCount-1) of the path to use.
+// Called on the msquic send thread — must be non-blocking and lock-free.
+//
+typedef uint32_t (QUIC_PATH_SELECTOR_FN)(
+    _In_reads_(PathCount) const QUIC_PATH_METRICS* Metrics,
+    _In_ uint32_t PathCount,
+    _In_opt_ void* Context
+    );
+
+typedef struct QUIC_PATH_SELECTOR {
+    QUIC_PATH_SELECTOR_FN* Fn;     // NULL = use built-in random
+    void*                  Context;
+} QUIC_PATH_SELECTOR;
 
 //
 // Parameters for TLS.

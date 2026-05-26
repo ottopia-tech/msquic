@@ -248,6 +248,7 @@ QuicConnAlloc(
         PathID->DestCidCount++;
         QuicPathIDAddDestCID(PathID, Path->DestCid);
 
+        PathID->Flags.InUse = TRUE; // initial client path owns PathID 0; prevent GetUnusedPathID reuse
         Connection->State.Initialized = TRUE;
         QuicTraceEvent(
             ConnInitializeComplete,
@@ -6455,6 +6456,7 @@ QuicConnAddLocalAddress(
         Path = &Connection->Paths[1];
         QuicPathInitialize(Connection, Path);
         Path->Allowance = UINT32_MAX;
+        Path->Mtu = Connection->Paths[0].Mtu; // inherit probed MTU so large datagrams fit
         Connection->PathsCount++;
     }
 
@@ -7207,6 +7209,16 @@ QuicConnParamSet(
                 QuicSendSetSendFlag(&Connection->Send, QUIC_CONN_SEND_FLAG_PATH_BACKUP);
             }
         }
+        Status = QUIC_STATUS_SUCCESS;
+        break;
+
+    case QUIC_PARAM_CONN_PATH_SELECTOR:
+
+        if (BufferLength != sizeof(QUIC_PATH_SELECTOR) || Buffer == NULL) {
+            Status = QUIC_STATUS_INVALID_PARAMETER;
+            break;
+        }
+        Connection->PathSelector = *(const QUIC_PATH_SELECTOR*)Buffer;
         Status = QUIC_STATUS_SUCCESS;
         break;
 

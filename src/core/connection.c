@@ -6456,6 +6456,7 @@ QuicConnAddLocalAddress(
         Path = &Connection->Paths[1];
         QuicPathInitialize(Connection, Path);
         Path->Allowance = UINT32_MAX;
+        Path->Mtu = Connection->Paths[0].Mtu; // inherit probed MTU so large datagrams fit
         Connection->PathsCount++;
     }
 

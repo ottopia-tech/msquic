@@ -16,6 +16,11 @@ class MsQuicMpConan(ConanFile):
     # CI workflow: build first with cmake (see .ci/), then conan export-pkg.
     # No conan build() method — msquic uses its own cmake presets/submodules.
 
+    def package_id(self):
+        # msquic is built once (Release); collapse build_type so Debug consumers find same package.
+        del self.info.settings.build_type
+        del self.info.settings.compiler
+
     def configure(self):
         self.settings.rm_safe("compiler.libcxx")
         self.settings.rm_safe("compiler.cppstd")

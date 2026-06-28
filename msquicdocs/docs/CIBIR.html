@@ -2,9 +2,9 @@
 <html>
   <head>
     <meta charset="utf-8">
-      <title>Architecture </title>
+      <title>CIBIR </title>
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
-      <meta name="title" content="Architecture ">
+      <meta name="title" content="CIBIR ">
       
       
       <link rel="icon" href="../favicon.ico">
@@ -16,7 +16,7 @@
       <meta name="docfx:rel" content="../">
       
       
-      <meta name="docfx:docurl" content="https://github.com/ottopia-tech/msquic/blob/main/docs/Architecture.md/#L1">
+      <meta name="docfx:docurl" content="https://github.com/ottopia-tech/msquic/blob/main/docs/CIBIR.md/#L1">
       <meta name="loc:inThisArticle" content="In this article">
       <meta name="loc:searchResultsCount" content="{count} results for &quot;{query}&quot;">
       <meta name="loc:searchNoResults" content="No results for &quot;{query}&quot;">
@@ -85,63 +85,48 @@
         </div>
 
         <article data-uid="">
-<h1 id="architecture">Architecture</h1>
+<h1 id="cibir">CIBIR</h1>
 
-<p>MsQuic has primarily two high-level layers: QUIC and the platform. The platform layer includes
-abstractions for TLS, UDP and OS stuff (like threads and locks). The QUIC layer is platform
-independent logic, built on the platform abstraction layers.</p>
-<h1 id="component-breakdown">Component Breakdown</h1>
-<h2 id="platform-abstraction-layer">Platform Abstraction Layer</h2>
-<p>The platform abstraction layer (or PAL) supports the following platforms:</p>
+<h2 id="what-is-it">What is it</h2>
+<p>See the <a href="https://datatracker.ietf.org/doc/html/draft-banks-quic-cibir">draft IETF</a> for CIBIR.</p>
+<p>When CIBIR is used, rather than programming <a href="XDP.html">XDP</a> to filter and demux packets based on on address and port number,
+XDP with CIBIR will instead filter and de-mux packets based on address, port number, and QUIC connection ID.</p>
+<p>What CIBIR allows for is 2 or more separate server processes to share a single
+port on the same machine, as long as their CIBIR ID is different.</p>
+<h2 id="cibir-port-sharing-logic">CIBIR port sharing logic</h2>
 <ul>
-<li>Windows (User and Kernel)</li>
-<li>Linux</li>
-<li>FreeBSD</li>
-<li>macOS</li>
-</ul>
-<h3 id="basic-os-interfaces">Basic OS Interfaces</h3>
-<p>The most fundamental part of the PAL is definitions of basic constructs like locks, events, interlocked operations, threads, and time. Most of these definitions are implemented inline in C macros. The goal is to minimize overhead and simply be a minimal abstraction for various interfaces.</p>
-<h3 id="datapath">Datapath</h3>
-<p>Another large piece of the PAL is the abstraction of UDP and TCP sockets, named the &quot;datapath&quot; layer. This layer is designed to be highly parallelized and performant.</p>
-<p>It uses asynchronous callbacks driven by the current execution model (see <a href="#execution-model">below</a>) threads.</p>
-<p>Currently, it also has preview support of XDP on Windows.<br>
-XDP datapath is used when</p>
+<li>Applications must provide a well-known local port for server sockets when using CIBIR and XDP.</li>
+<li><strong>IMPORTANT:</strong> MsQuic will <strong>NOT</strong> reserve an OS port for server sockets when both CIBIR and XDP is enabled and available.
 <ul>
-<li>XDP initialization succeeds
-<ul>
-<li>XDP deps are installed</li>
-<li>XDP capable NIC is available</li>
+<li>Client sockets can never share ports, so MsQuic will reserve an OS port in that scenario.</li>
 </ul>
 </li>
-<li>Targetting to non-loopback address</li>
+<li>The responsibility of book-keeping shared ports and ensuring robust protection for those shared ports is delegated to the application.</li>
 </ul>
-<h3 id="crypto">Crypto</h3>
-<p>The PAL exposes various cryptographic interfaces as well, such has encryption/decryption and cryptographic hashing. This layer currently supports BCrypt and OpenSSL variants on Windows, and OpenSSL on Linux.</p>
-<h3 id="tls">TLS</h3>
-<p>Related to Crypto, the TLS layer abstracts the necessary TLS functionality required by the QUIC protocol. This layer currently supports Schannel and OpenSSL variants on Windows, and OpenSSL on Linux.</p>
-<h3 id="platform-initialization">Platform Initialization</h3>
-<p>The platform layer isn't completely stateless, and requires some setup and cleanup. This is split into two layers:</p>
-<h4 id="library-load">Library Load</h4>
-<p>This is when the library is loaded into memory, and does very minimal work, such as initializing some global state, and generally cannot fail.</p>
-<p>See <code>CxPlatSystemLoad</code> and <code>CxPlatSystemUnload</code> in the code for more details.</p>
-<h4 id="library-initialization">Library Initialization</h4>
-<p>This is when the library is first used by the upper layer(s). It does the rest of the work, especially the more intensive work that may fail under extreme circumstances (missing dependencies or OOM).</p>
-<p>See <code>CxPlatInitialize</code> and <code>CxPlatUninitialize</code> in the code for more details.</p>
-<h2 id="quic">QUIC</h2>
-<p>The QUIC layer builds on the abstractions exposed by the PAL to implement platform-independent protocol logic of the QUIC protocol.</p>
-<blockquote>
-<p><strong>TODO</strong> - Add details</p>
-</blockquote>
-<h1 id="execution-model">Execution Model</h1>
-<p>The execution model refers to how and where work is scheduled and executed.</p>
-<blockquote>
-<p><strong>TODO</strong> - Add details</p>
-</blockquote>
+<h2 id="port-protection-recommendations-for-shared-ports">Port protection recommendations for shared ports</h2>
+<h3 id="option-1-persistent-port-reservations-recommended">Option 1: Persistent port reservations (Recommended)</h3>
+<p>MsQuic strongly recommends applications leverage the Windows <a href="https://learn.microsoft.com/en-us/windows/win32/api/iphlpapi/nf-iphlpapi-createpersistentudpportreservation">persistent port reservations API</a> to secure shared CIBIR ports prior to serving multi-process CIBIR traffic on a shared port.</p>
+<ul>
+<li>One time setup by a system admin to create the persistent reservation.
+<ul>
+<li>A good option for book-keeping persistent port reservations is via registry keys.</li>
+</ul>
+</li>
+<li>Persistent port reservations survive reboots, allowing for robust protection in the event of crashes.</li>
+<li>Having a persistent reservation makes sure CIBIR ports are taken out of the ephemeral port pool and forbids sockets from binding to it unless it is associated with a persistent reservation token, which can only happen in an elevated process.
+<ul>
+<li>This way, an unsuspecting application process won't get accidently assigned an ephemeral port that collides with a CIBIR port.</li>
+</ul>
+</li>
+</ul>
+<h3 id="option-2-wfp-ale-application-layer-enforcement-filters">Option 2: WFP ALE (Application Layer Enforcement) filters</h3>
+<p>As an alternative, applications can use the <a href="https://learn.microsoft.com/en-us/windows/win32/fwp/windows-filtering-platform-start-page">Windows Filtering Platform (WFP)</a> to create ALE filters that block unauthorized bind attempts to CIBIR ports.</p>
+<p>ALE filters operate at the <a href="https://learn.microsoft.com/en-us/windows/win32/fwp/ale-layers">bind and connect authorization layers</a> (<code>FWPM_LAYER_ALE_AUTH_RECV_ACCEPT_V4/V6</code>, <code>FWPM_LAYER_ALE_RESOURCE_ASSIGNMENT_V4/V6</code>). A filter can be configured to block any process from binding to a specific UDP port unless it matches an allowed application path or security descriptor.</p>
 
 </article>
 
         <div class="contribution d-print-none">
-          <a href="https://github.com/ottopia-tech/msquic/blob/main/docs/Architecture.md/#L1" class="edit-link">Edit this page</a>
+          <a href="https://github.com/ottopia-tech/msquic/blob/main/docs/CIBIR.md/#L1" class="edit-link">Edit this page</a>
         </div>
 
         <div class="next-article d-print-none border-top" id="nextArticle"></div>

@@ -15,6 +15,9 @@ Abstract:
 #include "quic_datapath.h"
 
 #include "msquic.h"
+#if defined(CX_PLATFORM_LINUX)
+#include <net/if.h>
+#endif
 #ifdef QUIC_CLOG
 #include "DataPathTest.cpp.clog.h"
 #endif
@@ -537,7 +540,8 @@ struct CxPlatSocket {
         _In_opt_ const QUIC_ADDR* LocalAddress = nullptr,
         _In_opt_ const QUIC_ADDR* RemoteAddress = nullptr,
         _In_opt_ void* CallbackContext = nullptr,
-        _In_ CXPLAT_SOCKET_FLAGS InternalFlags = CXPLAT_SOCKET_FLAG_NONE
+        _In_ CXPLAT_SOCKET_FLAGS InternalFlags = CXPLAT_SOCKET_FLAG_NONE,
+        _In_ uint32_t InterfaceIndex = 0
         ) noexcept // UDP
     {
         CreateUdp(
@@ -545,7 +549,8 @@ struct CxPlatSocket {
             LocalAddress,
             RemoteAddress,
             CallbackContext,
-            InternalFlags);
+            InternalFlags,
+            InterfaceIndex);
     }
     ~CxPlatSocket() noexcept {
         if (Socket) {
@@ -562,14 +567,15 @@ struct CxPlatSocket {
         _In_opt_ const QUIC_ADDR* LocalAddress = nullptr,
         _In_opt_ const QUIC_ADDR* RemoteAddress = nullptr,
         _In_opt_ void* CallbackContext = nullptr,
-        _In_ CXPLAT_SOCKET_FLAGS InternalFlags = CXPLAT_SOCKET_FLAG_NONE
+        _In_ CXPLAT_SOCKET_FLAGS InternalFlags = CXPLAT_SOCKET_FLAG_NONE,
+        _In_ uint32_t InterfaceIndex = 0
         ) noexcept
     {
         CXPLAT_UDP_CONFIG UdpConfig = {0};
         UdpConfig.LocalAddress = LocalAddress;
         UdpConfig.RemoteAddress = RemoteAddress;
         UdpConfig.Flags = InternalFlags;
-        UdpConfig.InterfaceIndex = 0;
+        UdpConfig.InterfaceIndex = InterfaceIndex;
         UdpConfig.CallbackContext = CallbackContext;
         InitStatus =
             CxPlatSocketCreateUdp(
@@ -847,6 +853,131 @@ TEST_P(DataPathTest, UdpData)
     Client.Send(ClientSendData);
     ASSERT_TRUE(CxPlatEventWaitWithTimeout(RecvContext.ClientCompletion, 2000));
 }
+
+#if defined(CX_PLATFORM_LINUX)
+
+//
+// Binding with an explicit InterfaceIndex must pin the socket to that
+// interface (SO_BINDTODEVICE, or IP_UNICAST_IF/IPV6_UNICAST_IF when
+// unprivileged) and data must still flow over it (loopback here).
+//
+TEST_P(DataPathTest, UdpBindInterfaceIndexExplicit)
+{
+    const uint32_t LoopbackIfIndex = if_nametoindex("lo");
+    ASSERT_NE(LoopbackIfIndex, 0u);
+
+    UdpRecvContext RecvContext;
+    CxPlatDataPath Datapath(&UdpRecvCallbacks);
+    RecvContext.TtlSupported = Datapath.IsSupported(CXPLAT_DATAPATH_FEATURE_TTL);
+    RecvContext.DscpSupported = Datapath.IsDscpSupported();
+    VERIFY_QUIC_SUCCESS(Datapath.GetInitStatus());
+    ASSERT_NE(nullptr, Datapath.Datapath);
+
+    RecvContext.Dscp = RecvContext.DscpSupported ? CXPLAT_DSCP_LE : CXPLAT_DSCP_CS0;
+
+    auto unspecAddress = GetNewUnspecAddr();
+    CxPlatSocket Server(Datapath, &unspecAddress.SockAddr, nullptr, &RecvContext);
+    while (Server.GetInitStatus() == QUIC_STATUS_ADDRESS_IN_USE) {
+        unspecAddress.SockAddr.Ipv4.sin_port = GetNextPort();
+        Server.CreateUdp(Datapath, &unspecAddress.SockAddr, nullptr, &RecvContext);
+    }
+    VERIFY_QUIC_SUCCESS(Server.GetInitStatus());
+    ASSERT_NE(nullptr, Server.Socket);
+
+    auto serverAddress = GetNewLocalAddr();
+    RecvContext.DestinationAddress = serverAddress.SockAddr;
+    RecvContext.DestinationAddress.Ipv4.sin_port = Server.GetLocalAddress().Ipv4.sin_port;
+    ASSERT_NE(RecvContext.DestinationAddress.Ipv4.sin_port, (uint16_t)0);
+
+    auto clientAddress = GetNewLocalAddr(false); // loopback, ephemeral port
+    CxPlatSocket Client(
+        Datapath, &clientAddress.SockAddr, &RecvContext.DestinationAddress,
+        &RecvContext, CXPLAT_SOCKET_FLAG_NONE, LoopbackIfIndex);
+    VERIFY_QUIC_SUCCESS(Client.GetInitStatus());
+    ASSERT_NE(nullptr, Client.Socket);
+
+    CXPLAT_SEND_CONFIG SendConfig = { &Client.Route, 0, CXPLAT_ECN_NON_ECT, 0, (uint8_t)RecvContext.Dscp };
+    auto ClientSendData = CxPlatSendDataAlloc(Client, &SendConfig);
+    ASSERT_NE(nullptr, ClientSendData);
+    auto ClientBuffer = CxPlatSendDataAllocBuffer(ClientSendData, ExpectedDataSize);
+    ASSERT_NE(nullptr, ClientBuffer);
+    memcpy(ClientBuffer->Buffer, ExpectedData, ExpectedDataSize);
+
+    Client.Send(ClientSendData);
+    ASSERT_TRUE(CxPlatEventWaitWithTimeout(RecvContext.ClientCompletion, 2000));
+}
+
+//
+// With InterfaceIndex == 0 but a specific (non-wildcard) LocalAddress, the
+// datapath must auto-resolve the owning interface and bind to it, without
+// changing observable behavior on loopback.
+//
+TEST_P(DataPathTest, UdpBindInterfaceIndexAutoResolve)
+{
+    UdpRecvContext RecvContext;
+    CxPlatDataPath Datapath(&UdpRecvCallbacks);
+    RecvContext.TtlSupported = Datapath.IsSupported(CXPLAT_DATAPATH_FEATURE_TTL);
+    RecvContext.DscpSupported = Datapath.IsDscpSupported();
+    VERIFY_QUIC_SUCCESS(Datapath.GetInitStatus());
+    ASSERT_NE(nullptr, Datapath.Datapath);
+
+    RecvContext.Dscp = RecvContext.DscpSupported ? CXPLAT_DSCP_LE : CXPLAT_DSCP_CS0;
+
+    auto unspecAddress = GetNewUnspecAddr();
+    CxPlatSocket Server(Datapath, &unspecAddress.SockAddr, nullptr, &RecvContext);
+    while (Server.GetInitStatus() == QUIC_STATUS_ADDRESS_IN_USE) {
+        unspecAddress.SockAddr.Ipv4.sin_port = GetNextPort();
+        Server.CreateUdp(Datapath, &unspecAddress.SockAddr, nullptr, &RecvContext);
+    }
+    VERIFY_QUIC_SUCCESS(Server.GetInitStatus());
+    ASSERT_NE(nullptr, Server.Socket);
+
+    auto serverAddress = GetNewLocalAddr();
+    RecvContext.DestinationAddress = serverAddress.SockAddr;
+    RecvContext.DestinationAddress.Ipv4.sin_port = Server.GetLocalAddress().Ipv4.sin_port;
+    ASSERT_NE(RecvContext.DestinationAddress.Ipv4.sin_port, (uint16_t)0);
+
+    auto clientAddress = GetNewLocalAddr(false); // loopback, ephemeral port
+    CxPlatSocket Client(
+        Datapath, &clientAddress.SockAddr, &RecvContext.DestinationAddress,
+        &RecvContext); // InterfaceIndex == 0 -> auto-resolve from LocalAddress
+    VERIFY_QUIC_SUCCESS(Client.GetInitStatus());
+    ASSERT_NE(nullptr, Client.Socket);
+
+    CXPLAT_SEND_CONFIG SendConfig = { &Client.Route, 0, CXPLAT_ECN_NON_ECT, 0, (uint8_t)RecvContext.Dscp };
+    auto ClientSendData = CxPlatSendDataAlloc(Client, &SendConfig);
+    ASSERT_NE(nullptr, ClientSendData);
+    auto ClientBuffer = CxPlatSendDataAllocBuffer(ClientSendData, ExpectedDataSize);
+    ASSERT_NE(nullptr, ClientBuffer);
+    memcpy(ClientBuffer->Buffer, ExpectedData, ExpectedDataSize);
+
+    Client.Send(ClientSendData);
+    ASSERT_TRUE(CxPlatEventWaitWithTimeout(RecvContext.ClientCompletion, 2000));
+}
+
+//
+// An explicitly requested InterfaceIndex that does not exist must fail socket
+// creation (Windows parity), never be silently ignored. This is the
+// regression discriminator: before interface binding was implemented on
+// Linux, InterfaceIndex was dropped on the floor and this succeeded.
+//
+TEST_F(DataPathTest, UdpBindInterfaceIndexInvalid)
+{
+    CxPlatDataPath Datapath(&EmptyUdpCallbacks);
+    VERIFY_QUIC_SUCCESS(Datapath.GetInitStatus());
+    ASSERT_NE(nullptr, Datapath.Datapath);
+
+    const uint32_t BogusIfIndex = 0x7FFFFFFF;
+    char IfNameBuf[IF_NAMESIZE] = {0};
+    ASSERT_EQ(if_indextoname(BogusIfIndex, IfNameBuf), nullptr);
+
+    CxPlatSocket Socket(
+        Datapath, nullptr, nullptr, nullptr,
+        CXPLAT_SOCKET_FLAG_NONE, BogusIfIndex);
+    ASSERT_TRUE(QUIC_FAILED(Socket.GetInitStatus()));
+}
+
+#endif // CX_PLATFORM_LINUX
 
 TEST_P(DataPathTest, UdpDataPolling)
 {

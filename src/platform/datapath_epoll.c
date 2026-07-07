@@ -15,6 +15,8 @@ Environment:
 
 #include "platform_internal.h"
 #include "datapath_linux.h"
+#include <ifaddrs.h>
+#include <net/if.h>
 
 #ifdef QUIC_CLOG
 #include "datapath_epoll.c.clog.h"
@@ -416,6 +418,109 @@ Exit:
 }
 
 //
+// Resolves the network interface index owning the given local address.
+// Returns 0 if no interface currently carries that address.
+//
+static
+uint32_t
+CxPlatResolveLocalAddrInterfaceIndex(
+    _In_ const QUIC_ADDR* LocalAddress
+    )
+{
+    QUIC_ADDR Unmapped;
+    CxPlatConvertFromMappedV6(LocalAddress, &Unmapped);
+
+    struct ifaddrs* IfAddrs = NULL;
+    if (getifaddrs(&IfAddrs) != 0) {
+        return 0;
+    }
+
+    uint32_t InterfaceIndex = 0;
+    for (struct ifaddrs* Ifa = IfAddrs; Ifa != NULL; Ifa = Ifa->ifa_next) {
+        if (Ifa->ifa_addr == NULL ||
+            Ifa->ifa_addr->sa_family != Unmapped.Ip.sa_family) {
+            continue;
+        }
+        if (Unmapped.Ip.sa_family == AF_INET) {
+            if (((struct sockaddr_in*)Ifa->ifa_addr)->sin_addr.s_addr ==
+                    Unmapped.Ipv4.sin_addr.s_addr) {
+                InterfaceIndex = if_nametoindex(Ifa->ifa_name);
+                break;
+            }
+        } else if (Unmapped.Ip.sa_family == AF_INET6) {
+            if (memcmp(
+                    &((struct sockaddr_in6*)Ifa->ifa_addr)->sin6_addr,
+                    &Unmapped.Ipv6.sin6_addr,
+                    sizeof(struct in6_addr)) == 0) {
+                InterfaceIndex = if_nametoindex(Ifa->ifa_name);
+                break;
+            }
+        }
+    }
+
+    freeifaddrs(IfAddrs);
+    return InterfaceIndex;
+}
+
+//
+// Pins a socket's egress (and, when privileged, ingress) to a specific
+// network interface. Linux counterpart of the IP_UNICAST_IF/IPV6_UNICAST_IF
+// handling in datapath_winuser.c. SO_BINDTODEVICE is preferred because the
+// bound device also matches oif-keyed policy routing rules (multi-modem
+// setups); it requires CAP_NET_RAW, so unprivileged callers fall back to
+// the unicast-if options (egress interface hint only).
+//
+static
+QUIC_STATUS
+CxPlatSocketContextBindInterface(
+    _In_ CXPLAT_SOCKET_CONTEXT* SocketContext,
+    _In_ uint32_t InterfaceIndex
+    )
+{
+    char InterfaceName[IF_NAMESIZE] = {0};
+    if (if_indextoname(InterfaceIndex, InterfaceName) == NULL) {
+        return errno; // e.g. ENXIO: no such interface
+    }
+
+    if (setsockopt(
+            SocketContext->SocketFd,
+            SOL_SOCKET,
+            SO_BINDTODEVICE,
+            InterfaceName,
+            (socklen_t)strlen(InterfaceName)) == 0) {
+        return QUIC_STATUS_SUCCESS;
+    }
+    if (errno != EPERM && errno != EACCES) {
+        return errno;
+    }
+
+    //
+    // IP_UNICAST_IF takes the index in network byte order (Windows parity,
+    // man 7 ip); IPV6_UNICAST_IF takes host byte order (man 7 ipv6). The
+    // socket is dual-stack, so set both.
+    //
+    int Option = (int)htonl(InterfaceIndex);
+    if (setsockopt(
+            SocketContext->SocketFd,
+            IPPROTO_IP,
+            IP_UNICAST_IF,
+            (const void*)&Option,
+            sizeof(Option)) == SOCKET_ERROR) {
+        return errno;
+    }
+    Option = (int)InterfaceIndex;
+    if (setsockopt(
+            SocketContext->SocketFd,
+            IPPROTO_IPV6,
+            IPV6_UNICAST_IF,
+            (const void*)&Option,
+            sizeof(Option)) == SOCKET_ERROR) {
+        return errno;
+    }
+    return QUIC_STATUS_SUCCESS;
+}
+
+//
 // Socket context interface. It abstracts a (generally per-processor) UDP socket
 // and the corresponding logic/functionality like send and receive processing.
 //
@@ -487,6 +592,42 @@ CxPlatSocketContextInitialize(
     }
 
     if (SocketType == CXPLAT_SOCKET_UDP) {
+        //
+        // Pin the socket to the interface owning its local address so that
+        // egress uses the intended NIC (and matches oif-keyed policy routing
+        // rules) instead of falling through to the main routing table's
+        // default route. An explicit Config->InterfaceIndex is honored and
+        // failure is fatal (Windows parity); otherwise, with a specific
+        // local address, the owning interface is auto-resolved best-effort.
+        //
+        uint32_t InterfaceIndex = Config->InterfaceIndex;
+        const BOOLEAN ExplicitInterface = InterfaceIndex != 0;
+        if (!ExplicitInterface &&
+            Config->LocalAddress != NULL &&
+            !QuicAddrIsWildCard(Config->LocalAddress)) {
+            InterfaceIndex = CxPlatResolveLocalAddrInterfaceIndex(Config->LocalAddress);
+        }
+        if (InterfaceIndex != 0) {
+            const QUIC_STATUS BindIfStatus =
+                CxPlatSocketContextBindInterface(SocketContext, InterfaceIndex);
+            if (QUIC_FAILED(BindIfStatus)) {
+                QuicTraceEvent(
+                    DatapathErrorStatus,
+                    "[data][%p] ERROR, %u, %s.",
+                    Binding,
+                    BindIfStatus,
+                    "interface binding failed");
+                if (ExplicitInterface) {
+                    Status = BindIfStatus;
+                    goto Exit;
+                }
+                //
+                // Auto-resolved index: best effort only; fall back to the
+                // pre-binding behavior (plain routing lookup).
+                //
+            }
+        }
+
         //
         // Set DON'T FRAG socket option.
         //

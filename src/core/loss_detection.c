@@ -917,6 +917,30 @@ QuicLossDetectionRetransmitFrames(
                         Path->ID);
                     QuicPerfCounterIncrement(
                         Connection->Partition, QUIC_PERF_COUNTER_PATH_FAILURE);
+                    //
+                    // Tell the app the path is gone before we reclaim the slot.
+                    // Historically this give-up removed the path silently, so a
+                    // path that never validated (e.g. PATH_CHALLENGE/RESPONSE
+                    // lost on a dead NAT return path) left the app believing the
+                    // path was still pending forever, while the slot in the
+                    // fixed Paths[] array stayed occupied. Raising PATH_REMOVED
+                    // here — mirroring the PATH_ABANDON arms in connection.c —
+                    // lets the app free its bookkeeping and re-drive the path if
+                    // it still wants it, and keeps this in parity with the only
+                    // other give-up signal an app could observe.
+                    //
+                    if (Connection->State.MultipathNegotiated) {
+                        QUIC_CONNECTION_EVENT Event;
+                        Event.Type = QUIC_CONNECTION_EVENT_PATH_REMOVED;
+                        Event.PATH_REMOVED.PeerAddress = &Path->Route.RemoteAddress;
+                        Event.PATH_REMOVED.LocalAddress = &Path->Route.LocalAddress;
+                        Event.PATH_REMOVED.PathId = Path->PathID != NULL ? Path->PathID->ID : Path->ID;
+                        QuicTraceLogConnVerbose(
+                            IndicatePathRemoved,
+                            Connection,
+                            "Indicating QUIC_CONNECTION_EVENT_PATH_REMOVED");
+                        (void)QuicConnIndicateEvent(Connection, &Event);
+                    }
                     CXPLAT_DBG_ASSERT(Connection->Paths[PathIndex].Binding != NULL);
                     QuicLibraryReleaseBinding(Connection->Paths[PathIndex].Binding);
                     Connection->Paths[PathIndex].Binding = NULL;

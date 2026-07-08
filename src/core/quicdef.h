@@ -371,13 +371,18 @@ CXPLAT_STATIC_ASSERT(
 
 //
 // The maximum number of paths a single connection will keep track of.
+// Raised from 4 to 16 so a multipath connection can hold many concurrently
+// connected paths (e.g. ~10 cellular modems) with headroom for a few standby
+// paths used for fast failover. Sizes the embedded Connection->Paths[] array.
 //
-#define QUIC_MAX_PATH_COUNT                     4
+#define QUIC_MAX_PATH_COUNT                     16
 
 //
 // Maximum number of connection IDs accepted from the peer.
+// Kept >= QUIC_MAX_PATH_COUNT (see static assert below): every tracked path
+// needs a distinct destination CID, so this rises with the path count.
 //
-#define QUIC_ACTIVE_CONNECTION_ID_LIMIT         4
+#define QUIC_ACTIVE_CONNECTION_ID_LIMIT         16
 
 CXPLAT_STATIC_ASSERT(
     2 <= QUIC_ACTIVE_CONNECTION_ID_LIMIT,
@@ -389,8 +394,11 @@ CXPLAT_STATIC_ASSERT(
 
 //
 // Maximum number of PATH IDs accepted from the peer.
+// Raised from 4 to 16 to match QUIC_MAX_PATH_COUNT: this bounds the multipath
+// path-id space (advertised to the peer as the initial_max_path_id transport
+// parameter, = LIMIT-1) and sizes the per-operation PathID stack arrays.
 //
-#define QUIC_ACTIVE_PATH_ID_LIMIT               4
+#define QUIC_ACTIVE_PATH_ID_LIMIT               16
 
 //
 // The default value for pacing being enabled or not.

@@ -5,7 +5,7 @@ from conan.tools.files import copy
 
 class MsQuicMpConan(ConanFile):
     name = "msquic"
-    version = "2.6.0-mp"
+    version = "2.6.2-mp"
     description = "msquic masa-koz/mpquic-path-selector fork — 3-path MP-QUIC + pluggable path selector"
     license = "MIT"
     url = "https://github.com/ottopia-tech/msquic"

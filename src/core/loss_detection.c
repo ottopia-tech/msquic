@@ -444,6 +444,7 @@ QuicLossDetectionOnPacketSent(
         }
 
         Connection->Stats.Send.RetransmittablePackets++;
+        PathID->Stats.Send.RetransmittablePackets++;
         LossDetection->PacketsInFlight++;
         LossDetection->TimeOfLastPacketSent = SentPacket->SentTime;
 

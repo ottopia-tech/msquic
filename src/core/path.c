@@ -357,6 +357,16 @@ QuicConnChoosePath(
                         QuicCongestionControlGetCongestionWindow(&ActivePaths[i]->PathID->CongestionControl);
                     Metrics[i].BytesInFlightMax     =
                         QuicCongestionControlGetBytesInFlightMax(&ActivePaths[i]->PathID->CongestionControl);
+                    // Per-path loss, straight from the PathID send stats. Actual
+                    // loss = suspected - spurious (a spuriously-declared-lost
+                    // packet was later acked, so it wasn't really lost). Lets the
+                    // selector down-rank a genuinely lossy modem and lets netweave
+                    // publish per-modem loss to Kibana.
+                    Metrics[i].SentPackets =
+                        ActivePaths[i]->PathID->Stats.Send.RetransmittablePackets;
+                    Metrics[i].LostPackets =
+                        ActivePaths[i]->PathID->Stats.Send.SuspectedLostPackets -
+                        ActivePaths[i]->PathID->Stats.Send.SpuriousLostPackets;
                 }
                 uint32_t Chosen = Connection->PathSelector.Fn(
                     Metrics, ActivePathCount, Connection->PathSelector.Context);

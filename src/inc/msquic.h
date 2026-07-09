@@ -1062,6 +1062,8 @@ typedef struct QUIC_PATH_METRICS {
     uint32_t SmoothedRttUs;        // smoothed RTT in microseconds
     uint32_t CongestionWindowBytes;// current congestion window
     uint32_t BytesInFlightMax;     // peak bytes-in-flight (proxy for utilisation)
+    uint64_t SentPackets;          // cumulative retransmittable pkts sent on this path
+    uint64_t LostPackets;          // cumulative genuinely-lost pkts (suspected - spurious)
 } QUIC_PATH_METRICS;
 
 //

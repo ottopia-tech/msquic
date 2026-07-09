@@ -15,6 +15,8 @@ Environment:
 
 #include "platform_internal.h"
 #include "datapath_linux.h"
+#include <net/if.h>
+#include <ifaddrs.h>
 
 #ifdef QUIC_CLOG
 #include "datapath_epoll.c.clog.h"
@@ -416,6 +418,106 @@ Exit:
 }
 
 //
+// Resolves the index of the network interface that owns the given local
+// address by walking getifaddrs(). Returns 0 if the address is a wildcard/any
+// address or is not assigned to any interface.
+//
+// This exists because, on Linux, policy routing keys on the packet's *output
+// interface* (oif), not its source IP. A socket bound only to a source address
+// still egresses via the main routing table's default route. For multipath
+// this means extra paths (added via AddLocalAddress with a specific local IP)
+// leave via the wrong link, so their PATH_CHALLENGEs are dropped and the path
+// never validates. Binding the socket to the owning interface (below) fixes
+// this and brings the Linux datapath to parity with Windows, which already
+// honors CXPLAT_UDP_CONFIG.InterfaceIndex (datapath_winuser.c).
+//
+static uint32_t
+CxPlatResolveLocalInterfaceIndex(
+    _In_ const QUIC_ADDR* Address
+    )
+{
+    if (Address == NULL || QuicAddrIsWildCard(Address)) {
+        return 0;
+    }
+
+    QUIC_ADDR Unmapped = {0};
+    CxPlatConvertFromMappedV6(Address, &Unmapped);
+    const QUIC_ADDRESS_FAMILY Family = QuicAddrGetFamily(&Unmapped);
+    if (Family != QUIC_ADDRESS_FAMILY_INET && Family != QUIC_ADDRESS_FAMILY_INET6) {
+        return 0;
+    }
+
+    struct ifaddrs* IfList = NULL;
+    if (getifaddrs(&IfList) != 0) {
+        return 0;
+    }
+
+    uint32_t InterfaceIndex = 0;
+    for (struct ifaddrs* Ifa = IfList; Ifa != NULL; Ifa = Ifa->ifa_next) {
+        if (Ifa->ifa_addr == NULL || Ifa->ifa_addr->sa_family != Family) {
+            continue;
+        }
+        if (Family == QUIC_ADDRESS_FAMILY_INET) {
+            const struct sockaddr_in* Sin = (const struct sockaddr_in*)Ifa->ifa_addr;
+            if (Sin->sin_addr.s_addr == Unmapped.Ipv4.sin_addr.s_addr) {
+                InterfaceIndex = if_nametoindex(Ifa->ifa_name);
+                break;
+            }
+        } else {
+            const struct sockaddr_in6* Sin6 = (const struct sockaddr_in6*)Ifa->ifa_addr;
+            if (memcmp(&Sin6->sin6_addr, &Unmapped.Ipv6.sin6_addr, sizeof(struct in6_addr)) == 0) {
+                InterfaceIndex = if_nametoindex(Ifa->ifa_name);
+                break;
+            }
+        }
+    }
+
+    freeifaddrs(IfList);
+    return InterfaceIndex;
+}
+
+//
+// Binds a UDP socket to a specific network interface so its packets egress via
+// that link regardless of the main-table default route (see
+// CxPlatResolveLocalInterfaceIndex for why this is required on Linux). Uses
+// SO_BINDTODEVICE when permitted (needs CAP_NET_RAW), falling back to the
+// unprivileged IP(V6)_UNICAST_IF options that the Windows datapath uses.
+//
+// Returns QUIC_STATUS_SUCCESS on success. When the interface was auto-resolved
+// (not explicitly requested by the caller) a failure is non-fatal — the socket
+// is left unbound, preserving the previous behavior for unprivileged consumers.
+//
+static QUIC_STATUS
+CxPlatSocketBindToInterface(
+    _In_ int SocketFd,
+    _In_ uint32_t InterfaceIndex,
+    _In_ BOOLEAN Explicit
+    )
+{
+    char IfName[IF_NAMESIZE] = {0};
+    if (if_indextoname(InterfaceIndex, IfName) != NULL &&
+        setsockopt(SocketFd, SOL_SOCKET, SO_BINDTODEVICE, IfName, (socklen_t)strlen(IfName)) == 0) {
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    //
+    // SO_BINDTODEVICE failed (typically EPERM when unprivileged). Fall back to
+    // the routing-hint options, set on both address families for the dual-stack
+    // socket. IP_UNICAST_IF takes the index in network byte order; IPV6_UNICAST_IF
+    // in host order (see man 7 ip / ipv6).
+    //
+    int V6Option = (int)InterfaceIndex;
+    int V4Option = (int)htonl(InterfaceIndex);
+    int R6 = setsockopt(SocketFd, IPPROTO_IPV6, IPV6_UNICAST_IF, &V6Option, sizeof(V6Option));
+    int R4 = setsockopt(SocketFd, IPPROTO_IP, IP_UNICAST_IF, &V4Option, sizeof(V4Option));
+    if (R6 == 0 || R4 == 0) {
+        return QUIC_STATUS_SUCCESS;
+    }
+
+    return Explicit ? (QUIC_STATUS)errno : QUIC_STATUS_SUCCESS;
+}
+
+//
 // Socket context interface. It abstracts a (generally per-processor) UDP socket
 // and the corresponding logic/functionality like send and receive processing.
 //
@@ -797,6 +899,34 @@ CxPlatSocketContextInitialize(
                 Status,
                 "setsockopt(SO_LINGER) failed");
             goto Exit;
+        }
+    }
+
+    //
+    // Bind the socket to the interface that owns its local address, so packets
+    // egress via the correct link on Linux (where policy routing keys on oif,
+    // not source IP). Honor an explicitly-requested Config->InterfaceIndex
+    // (Windows parity), otherwise auto-resolve from the local address — this is
+    // what steers multipath extra paths out their own modem instead of the
+    // main-table default route. Must happen before bind()/connect().
+    //
+    if (SocketType == CXPLAT_SOCKET_UDP) {
+        const BOOLEAN ExplicitInterface = Config->InterfaceIndex != 0;
+        uint32_t InterfaceIndex = Config->InterfaceIndex;
+        if (InterfaceIndex == 0) {
+            InterfaceIndex = CxPlatResolveLocalInterfaceIndex(&Binding->LocalAddress);
+        }
+        if (InterfaceIndex != 0) {
+            Status = CxPlatSocketBindToInterface(SocketContext->SocketFd, InterfaceIndex, ExplicitInterface);
+            if (QUIC_FAILED(Status)) {
+                QuicTraceEvent(
+                    DatapathErrorStatus,
+                    "[data][%p] ERROR, %u, %s.",
+                    Binding,
+                    Status,
+                    "bind to interface failed");
+                goto Exit;
+            }
         }
     }
 

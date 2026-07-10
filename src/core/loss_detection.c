@@ -539,11 +539,31 @@ QuicLossDetectionOnPacketAcknowledged(
         switch (Packet->Frames[i].Type) {
 
         case QUIC_FRAME_ACK:
-        case QUIC_FRAME_ACK_1:
-            QuicAckTrackerOnAckFrameAcked(
-                &Path->PathID->Packets[EncryptLevel]->AckTracker,
-                Packet->Frames[i].ACK.LargestAckedPacketNumber);
+        case QUIC_FRAME_ACK_1: {
+            //
+            // Route the acked ACK frame to the tracker of the path whose
+            // packet number space it acknowledged, which is not necessarily
+            // the path that carried it. Using the carrier path's tracker
+            // would purge un-sent ACK ranges on other paths (packet numbers
+            // differ wildly between paths), fabricating loss on the peer.
+            //
+            BOOLEAN AckPathFatalError = FALSE;
+            QUIC_PATHID* AckedPathID =
+                QuicPathIDSetGetPathIDForPeer(
+                    &Connection->PathIDs,
+                    Packet->Frames[i].ACK.PathId,
+                    FALSE,
+                    &AckPathFatalError);
+            if (AckedPathID != NULL) {
+                if (AckedPathID->Packets[EncryptLevel] != NULL) {
+                    QuicAckTrackerOnAckFrameAcked(
+                        &AckedPathID->Packets[EncryptLevel]->AckTracker,
+                        Packet->Frames[i].ACK.LargestAckedPacketNumber);
+                }
+                QuicPathIDRelease(AckedPathID, QUIC_PATHID_REF_LOOKUP);
+            }
             break;
+        }
 
         case QUIC_FRAME_RESET_STREAM:
             QuicStreamOnResetAck(Packet->Frames[i].RESET_STREAM.Stream);

@@ -1794,6 +1794,15 @@ TEST_P(WithMultipathArgs, Multipath) {
         QuicTestMultipath(GetParam().Family);
     }
 }
+
+TEST_P(WithMultipathArgs, MultipathNoFalseLoss) {
+    TestLoggerT<ParamType> Logger("QuicTestMultipathNoFalseLoss", GetParam());
+    if (TestingKernelMode) {
+        GTEST_SKIP_("user mode only");
+    } else {
+        QuicTestMultipathNoFalseLoss(GetParam().Family);
+    }
+}
 #endif // QUIC_API_ENABLE_PREVIEW_FEATURES
 #endif // QUIC_TEST_DATAPATH_HOOKS_ENABLED
 

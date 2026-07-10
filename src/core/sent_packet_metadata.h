@@ -23,6 +23,13 @@ typedef struct QUIC_SENT_FRAME_METADATA {
     union {
         struct {
             uint64_t LargestAckedPacketNumber;
+            //
+            // The path whose packet number space this (PATH_)ACK frame
+            // acknowledged. ACK frames for one path may be carried in packets
+            // sent on another path, so this cannot be inferred from the
+            // carrier packet's path.
+            //
+            uint32_t PathId;
         } ACK;
         struct {
             QUIC_STREAM* Stream;

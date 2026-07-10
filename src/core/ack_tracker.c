@@ -336,6 +336,8 @@ QuicAckTrackerAckFrameEncode(
     Tracker->LargestPacketNumberAcknowledged =
         Builder->Metadata->Frames[Builder->Metadata->FrameCount].ACK.LargestAckedPacketNumber =
         QuicRangeGetMax(&Tracker->PacketNumbersToAck);
+    Builder->Metadata->Frames[Builder->Metadata->FrameCount].ACK.PathId =
+        PacketSpace->PathID->ID;
     (void)QuicPacketBuilderAddFrame(Builder, QUIC_FRAME_ACK, FALSE);
 
     return TRUE;

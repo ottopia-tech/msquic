@@ -553,4 +553,266 @@ QuicTestMultipath(
     TEST_TRUE(Context.PeerStreamChangedEvent.WaitTimeout(1500));
 
 }
+
+//
+// Regression test for fabricated per-path loss on sparse (minority) paths.
+//
+// Rig signature (3 cellular modems, ~90/5/5 datagram split): wire delivery is
+// ~100% yet the sender books ~11-14% loss on the minority paths —
+// SuspectedLostPackets grows but almost none are ever credited back as
+// spurious once the (late) ACKs arrive.  This test recreates the asymmetric
+// split over lossless loopback: any "actual lost" (suspected - spurious)
+// is fabricated by the loss detector, not the network.
+//
+
+struct MultipathFakeLossClientContext {
+    CxPlatEvent HandshakeCompleteEvent;
+    CxPlatEvent ShutdownEvent;
+    CxPlatEvent PathsAddedEvent;      // set once 2 extra paths are validated
+    CxPlatEvent AllSendsFinalEvent;   // set once every datagram reached a final state
+    long PathsAdded {0};
+    int64_t ExpectedSends {0};        // written before sends start
+    int64_t FinalizedSends {0};
+    int64_t LostDiscarded {0};        // app-visible fake loss (lossless link)
+
+    static QUIC_STATUS ClientCallback(_In_ MsQuicConnection*, _In_opt_ void* Context, _Inout_ QUIC_CONNECTION_EVENT* Event) {
+        MultipathFakeLossClientContext* Ctx = static_cast<MultipathFakeLossClientContext*>(Context);
+        if (Event->Type == QUIC_CONNECTION_EVENT_CONNECTED) {
+            Ctx->HandshakeCompleteEvent.Set();
+        } else if (Event->Type == QUIC_CONNECTION_EVENT_SHUTDOWN_COMPLETE) {
+            Ctx->ShutdownEvent.Set();
+            Ctx->HandshakeCompleteEvent.Set();
+        } else if (Event->Type == QUIC_CONNECTION_EVENT_PATH_ADDED) {
+            if (InterlockedIncrement(&Ctx->PathsAdded) >= 2) {
+                Ctx->PathsAddedEvent.Set();
+            }
+        } else if (Event->Type == QUIC_CONNECTION_EVENT_DATAGRAM_SEND_STATE_CHANGED) {
+            if (QUIC_DATAGRAM_SEND_STATE_IS_FINAL(Event->DATAGRAM_SEND_STATE_CHANGED.State)) {
+                if (Event->DATAGRAM_SEND_STATE_CHANGED.State == QUIC_DATAGRAM_SEND_LOST_DISCARDED) {
+                    InterlockedIncrement64(&Ctx->LostDiscarded);
+                }
+                if (InterlockedIncrement64(&Ctx->FinalizedSends) == Ctx->ExpectedSends) {
+                    Ctx->AllSendsFinalEvent.Set();
+                }
+            }
+        }
+        return QUIC_STATUS_SUCCESS;
+    }
+};
+
+//
+// Deterministic ~90/5/5 split, mirroring the rig's CCv2 equilibrium, and a
+// snapshot of the most recent per-path metrics msquic reported.  Single
+// writer (msquic send thread); the test only reads after traffic quiesces.
+//
+struct WeightedSelectorContext {
+    QUIC_PATH_METRICS Metrics[QUIC_ACTIVE_PATH_ID_LIMIT];
+    uint32_t PathCount {0};
+    uint64_t Picks {0};
+};
+
+static
+uint32_t
+MultipathFakeLossWeightedSelector(
+    _In_reads_(PathCount) const QUIC_PATH_METRICS* Metrics,
+    _In_ uint32_t PathCount,
+    _In_opt_ void* Context
+    )
+{
+    WeightedSelectorContext* Ctx = static_cast<WeightedSelectorContext*>(Context);
+    CxPlatCopyMemory(Ctx->Metrics, Metrics, PathCount * sizeof(*Metrics));
+    Ctx->PathCount = PathCount;
+    const uint64_t Pick = Ctx->Picks++;
+    if (PathCount < 2) {
+        return 0;
+    }
+    const uint32_t Slot = (uint32_t)(Pick % 20);
+    if (Slot == 0) {
+        return 1;                    // ~5%
+    }
+    if (Slot == 1 && PathCount >= 3) {
+        return 2;                    // ~5%
+    }
+    return 0;                        // ~90%
+}
+
+void
+QuicTestMultipathNoFalseLoss(
+    _In_ int Family
+    )
+{
+    MultipathFakeLossClientContext ClientContext;
+    PathTestContext ServerContext;
+    MsQuicRegistration Registration(true);
+    TEST_TRUE(Registration.IsValid());
+
+    MsQuicSettings Settings;
+    Settings.SetMultipathEnabled(TRUE);
+    Settings.SetDatagramReceiveEnabled(true);
+    Settings.SetPeerBidiStreamCount(1);
+
+    MsQuicConfiguration ServerConfiguration(Registration, "MsQuicTest", Settings, ServerSelfSignedCredConfig);
+    TEST_TRUE(ServerConfiguration.IsValid());
+
+    MsQuicCredentialConfig ClientCredConfig;
+    MsQuicConfiguration ClientConfiguration(Registration, "MsQuicTest", Settings, ClientCredConfig);
+    TEST_TRUE(ClientConfiguration.IsValid());
+
+    MsQuicAutoAcceptListener Listener(Registration, ServerConfiguration, PathTestContext::ConnCallback, &ServerContext);
+    TEST_QUIC_SUCCEEDED(Listener.GetInitStatus());
+    QUIC_ADDRESS_FAMILY QuicAddrFamily = (Family == 4) ? QUIC_ADDRESS_FAMILY_INET : QUIC_ADDRESS_FAMILY_INET6;
+    QuicAddr ServerLocalAddr(QuicAddrFamily);
+    TEST_QUIC_SUCCEEDED(Listener.Start("MsQuicTest", &ServerLocalAddr.SockAddr));
+    TEST_QUIC_SUCCEEDED(Listener.GetLocalAddr(ServerLocalAddr));
+
+    MsQuicConnection Connection(Registration, MsQuicCleanUpMode::CleanUpManual, MultipathFakeLossClientContext::ClientCallback, &ClientContext);
+    TEST_QUIC_SUCCEEDED(Connection.GetInitStatus());
+
+    Connection.SetShareUdpBinding();
+    Connection.SetSettings(MsQuicSettings{}.SetKeepAlive(25));
+
+    TEST_QUIC_SUCCEEDED(Connection.Start(ClientConfiguration, ServerLocalAddr.GetFamily(), QUIC_TEST_LOOPBACK_FOR_AF(ServerLocalAddr.GetFamily()), ServerLocalAddr.GetPort()));
+    TEST_TRUE(ClientContext.HandshakeCompleteEvent.WaitTimeout(TestWaitTimeout));
+    TEST_TRUE(ServerContext.HandshakeCompleteEvent.WaitTimeout(TestWaitTimeout));
+
+    //
+    // Bring up two extra paths (3 total), same as the 3-modem rig.
+    //
+    QuicAddr LocalAddr;
+    TEST_QUIC_SUCCEEDED(Connection.GetLocalAddr(LocalAddr));
+    for (int Extra = 0; Extra < 2; Extra++) {
+        LocalAddr.IncrementPort();
+        QUIC_STATUS Status;
+        int Try = 0;
+        do {
+            Status = Connection.SetParam(
+                QUIC_PARAM_CONN_ADD_LOCAL_ADDRESS,
+                sizeof(LocalAddr.SockAddr),
+                &LocalAddr.SockAddr);
+            if (Status != QUIC_STATUS_SUCCESS) {
+                LocalAddr.IncrementPort();
+            }
+        } while (Status == QUIC_STATUS_ADDRESS_IN_USE && ++Try <= 3);
+        TEST_QUIC_SUCCEEDED(Status);
+    }
+    TEST_TRUE(ClientContext.PathsAddedEvent.WaitTimeout(TestWaitTimeout));
+
+    //
+    // Install the asymmetric selector, then flood datagrams.
+    //
+    WeightedSelectorContext SelectorContext;
+    QUIC_PATH_SELECTOR Selector = { MultipathFakeLossWeightedSelector, &SelectorContext };
+    TEST_QUIC_SUCCEEDED(
+        Connection.SetParam(
+            QUIC_PARAM_CONN_PATH_SELECTOR,
+            sizeof(Selector),
+            &Selector));
+
+    const int64_t TotalSends = 8000;
+    static uint8_t Payload[1000];
+    QUIC_BUFFER DatagramBuffer = { sizeof(Payload), Payload };
+    ClientContext.ExpectedSends = TotalSends;
+
+    for (int64_t i = 0; i < TotalSends; i++) {
+        TEST_QUIC_SUCCEEDED(
+            MsQuic->DatagramSend(
+                Connection,
+                &DatagramBuffer,
+                1,
+                QUIC_SEND_FLAG_NONE,
+                &ClientContext)); // non-null: LOST_DISCARDED is only indicated for non-null contexts
+        //
+        // Light windowing: keeps the link busy without saturating loopback
+        // socket buffers into genuine kernel drops (128 * ~1KB stays well
+        // under the default 212KB rmem; 256 overflows it).
+        //
+        while (i - ClientContext.FinalizedSends > 128) {
+            CxPlatSleep(1);
+        }
+    }
+
+    //
+    // Wait for every datagram to reach a final state.  Keep waiting as long
+    // as forward progress is being made — on a lossless loopback stalls here
+    // mean ACKs are not being delivered/processed for some path.
+    //
+    int64_t LastFinalized = -1;
+    int StallChecks = 0;
+    while (!ClientContext.AllSendsFinalEvent.WaitTimeout(1000)) {
+        const int64_t Finalized = ClientContext.FinalizedSends;
+        if (Finalized == LastFinalized && ++StallChecks >= 10) {
+            break; // 10s with zero progress: give up and report.
+        }
+        if (Finalized != LastFinalized) {
+            StallChecks = 0;
+            LastFinalized = Finalized;
+        }
+    }
+    if (ClientContext.FinalizedSends != TotalSends) {
+        TEST_FAILURE(
+            "Datagram finals stalled: %lld of %lld finalized (lost_discarded=%lld)",
+            (long long)ClientContext.FinalizedSends,
+            (long long)TotalSends,
+            (long long)ClientContext.LostDiscarded);
+    }
+
+    //
+    // Let any straggler ACKs land so late spurious credit has every chance
+    // to be applied before we judge the counters.
+    //
+    CxPlatSleep(250);
+
+    QUIC_STATISTICS_V2 Stats;
+    uint32_t Size = sizeof(Stats);
+    TEST_QUIC_SUCCEEDED(
+        Connection.GetParam(
+            QUIC_PARAM_CONN_STATISTICS_V2,
+            &Size,
+            &Stats));
+
+    //
+    // The selector must have seen and used all three paths.
+    //
+    TEST_EQUAL(3, SelectorContext.PathCount);
+    for (uint32_t i = 0; i < SelectorContext.PathCount; i++) {
+        TEST_TRUE(SelectorContext.Metrics[i].SentPackets > 100);
+    }
+
+    //
+    // Loopback is lossless: everything suspected must eventually be credited
+    // back as spurious, and no datagram may be discarded as lost.  Allow a
+    // sliver of slack for a genuinely dropped packet under load.
+    //
+    const uint64_t ActualLost =
+        Stats.SendSuspectedLostPackets - Stats.SendSpuriousLostPackets;
+    const uint64_t MaxTolerated = (uint64_t)(TotalSends / 200); // 0.5%
+    if (ActualLost > MaxTolerated) {
+        TEST_FAILURE(
+            "Fabricated loss: suspected=%llu spurious=%llu actual=%llu (> %llu tolerated)",
+            (unsigned long long)Stats.SendSuspectedLostPackets,
+            (unsigned long long)Stats.SendSpuriousLostPackets,
+            (unsigned long long)ActualLost,
+            (unsigned long long)MaxTolerated);
+    }
+    for (uint32_t i = 0; i < SelectorContext.PathCount; i++) {
+        const uint64_t PathLost = SelectorContext.Metrics[i].LostPackets;
+        const uint64_t PathSent = SelectorContext.Metrics[i].SentPackets;
+        if (PathLost * 200 > PathSent) { // >0.5% of that path's packets
+            TEST_FAILURE(
+                "Fabricated loss on path[%u] (id=%u): lost=%llu of sent=%llu",
+                i,
+                SelectorContext.Metrics[i].PathId,
+                (unsigned long long)PathLost,
+                (unsigned long long)PathSent);
+        }
+    }
+    if (ClientContext.LostDiscarded > (int64_t)MaxTolerated) {
+        TEST_FAILURE(
+            "Datagrams discarded as lost on a lossless link: %lld",
+            (long long)ClientContext.LostDiscarded);
+    }
+
+    Connection.Shutdown(QUIC_TEST_NO_ERROR, QUIC_CONNECTION_SHUTDOWN_FLAG_NONE);
+    TEST_TRUE(ClientContext.ShutdownEvent.WaitTimeout(TestWaitTimeout));
+}
 #endif

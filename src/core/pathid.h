@@ -156,6 +156,18 @@ typedef struct QUIC_PATHID {
     uint64_t NextPacketNumber;
 
     //
+    // The current skipped packet number for attack detection, in this path
+    // ID's packet number space. If this is acknowledged, it indicates an
+    // attack.
+    //
+    uint64_t SkippedPacketNumber;
+
+    //
+    // The next packet number we will skip for attack detection.
+    //
+    uint64_t NextSkippedPacketNumber;
+
+    //
     // Statistics
     //
     QUIC_PATHID_STATS Stats;

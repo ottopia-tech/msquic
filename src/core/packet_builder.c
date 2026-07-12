@@ -380,24 +380,28 @@ QuicPacketBuilderPrepare(
             Builder->BatchId);
 
         //
-        // Occassionally skip a packet number for improved security.
+        // Occassionally skip a packet number for improved security. Packet
+        // numbers live in the path ID's number space, so the skip tracking
+        // must too — a connection-global counter would flag the peer's
+        // legitimate per-path ACKs as an injection attack.
         //
-        if (Connection->Send.NextSkippedPacketNumber == Connection->Send.NextPacketNumber) {
-            Connection->Send.SkippedPacketNumber =
-                Connection->Send.NextPacketNumber++;
+        if (Builder->Path->PathID->NextSkippedPacketNumber ==
+            Builder->Path->PathID->NextPacketNumber) {
+            Builder->Path->PathID->SkippedPacketNumber =
+                Builder->Path->PathID->NextPacketNumber++;
             QuicTraceLogConnWarning(
                 SkipPacketNumber,
                 Connection,
                 "Skipped packet number %llu",
-                Connection->Send.SkippedPacketNumber);
+                Builder->Path->PathID->SkippedPacketNumber);
 
             //
             // Randomly skip a packet number (from 0 to 65535).
             //
             uint16_t RandomSkip = 0;
             CxPlatRandom(sizeof(RandomSkip), &RandomSkip);
-            Connection->Send.NextSkippedPacketNumber =
-                Connection->Send.NextPacketNumber + RandomSkip;
+            Builder->Path->PathID->NextSkippedPacketNumber =
+                Builder->Path->PathID->NextPacketNumber + RandomSkip;
         }
 
         Builder->Metadata->FrameCount = 0;

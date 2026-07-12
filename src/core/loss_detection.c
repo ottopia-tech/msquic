@@ -1532,15 +1532,17 @@ QuicLossDetectionProcessAckBlocks(
     while ((AckBlock = QuicRangeGetSafe(AckBlocks, i++)) != NULL) {
         //
         // ATTACK DETECTION: Check if the skipped packet number is in this ACK
-        // block. If so, this indicates a potential injection attack.
+        // block. If so, this indicates a potential injection attack. The
+        // skipped number is tracked per path ID because ACK blocks are in the
+        // path ID's packet number space.
         //
-        if (Connection->Send.SkippedPacketNumber >= AckBlock->Low &&
-            Connection->Send.SkippedPacketNumber <= QuicRangeGetHigh(AckBlock)) {
+        if (PathID->SkippedPacketNumber >= AckBlock->Low &&
+            PathID->SkippedPacketNumber <= QuicRangeGetHigh(AckBlock)) {
             QuicTraceLogConnError(
                 AttackDetected,
                 Connection,
                 "Attack detected: Skipped packet number %llu ACKed in range [%llu, %llu]",
-                Connection->Send.SkippedPacketNumber,
+                PathID->SkippedPacketNumber,
                 AckBlock->Low,
                 QuicRangeGetHigh(AckBlock));
             QuicConnTransportError(Connection, QUIC_ERROR_PROTOCOL_VIOLATION);
